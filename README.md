@@ -138,6 +138,15 @@ Default placeholders are:
 | `ip` | `[IP]` | `[IP#2]` |
 | `secret` | `[密钥]` | `[密钥#2]` |
 
+The embedded rules recognise machine-looking secrets. A short human password
+written in prose, such as `my password is passW0RD!`, is not one of them. The
+optional [`rules/prose-credentials.toml`](rules/prose-credentials.toml) adds
+that: copy it next to the plugin library and set `gitleaks_toml` to its path
+with `gitleaks_mode: extend`. It catches a value next to `пароль`, `секрет`,
+`токен`, `ключ`, `password` or `passwd` when the value is quoted, or is at
+least six characters long and contains a digit or one of `!@#%^&*`. A
+credential stated without one of those words nearby is still not detected.
+
 The request cache retains only hashes and replacement labels. It never retains a
 plaintext finding or a reversible mapping. In `mode: tokenize` a separate token
 vault does hold original values in memory; it is described below.
