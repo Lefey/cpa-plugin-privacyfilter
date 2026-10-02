@@ -19,6 +19,8 @@ type privacyFilterPlugin struct {
 	engine       *privacyengine.Engine
 	renderer     privacyengine.Renderer
 	blockRuleIDs map[string]struct{}
+	keyFilter    *keyFilter
+	keyStats     *keyFilterStats
 	cache        *RequestScanCache
 	revision     uint64
 }
@@ -40,20 +42,32 @@ func (p *privacyFilterPlugin) Identifier() string {
 }
 
 func (p *privacyFilterPlugin) InterceptRequestBeforeAuth(ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
-	return p.interceptRequest(ctx, req)
+	return p.interceptRequest(ctx, req, false)
 }
 
 func (p *privacyFilterPlugin) InterceptRequestAfterAuth(ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
-	return p.interceptRequest(ctx, req)
+	return p.interceptRequest(ctx, req, true)
 }
 
-func (p *privacyFilterPlugin) interceptRequest(ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
+func (p *privacyFilterPlugin) interceptRequest(ctx context.Context, req pluginapi.RequestInterceptRequest, afterAuth bool) (pluginapi.RequestInterceptResponse, error) {
 	if p.cfg.shouldSkip(req.Model, req.RequestedModel, req.SourceFormat) {
 		log.WithFields(log.Fields{
 			"source_format": safeLogValue(req.SourceFormat),
 			"model":         safeLogValue(req.RequestedModel),
 		}).Warn("privacyfilter: request bypassed by skip configuration")
 		return pluginapi.RequestInterceptResponse{}, nil
+	}
+	callerScope := callerScopeFromMetadata(req.Metadata)
+	if p.keyFilter.active() {
+		switch p.keyFilter.decide(callerScope, afterAuth) {
+		case keyDecisionDefer:
+			return pluginapi.RequestInterceptResponse{}, nil
+		case keyDecisionSkip:
+			p.keyStats.record(keyDecisionSkip)
+			return pluginapi.RequestInterceptResponse{}, nil
+		default:
+			p.keyStats.record(keyDecisionFilter)
+		}
 	}
 	if len(req.Body) == 0 {
 		return p.handleFailure(req.SourceFormat, payload.ErrInvalidJSON), nil

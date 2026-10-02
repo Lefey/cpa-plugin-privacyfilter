@@ -20,6 +20,7 @@ const (
 type runtimeState struct {
 	cache    *RequestScanCache
 	revision atomic.Uint64
+	keyStats keyFilterStats
 }
 
 func newRuntimeState() *runtimeState {
@@ -52,10 +53,16 @@ func buildPluginWithRuntime(configYAML []byte, pluginDir string, runtime *runtim
 	if runtime == nil {
 		runtime = newRuntimeState()
 	}
+	keys, errKeys := cfg.KeyFilter.compile()
+	if errKeys != nil {
+		return pluginapi.Plugin{}, errKeys
+	}
 	p := &privacyFilterPlugin{
-		cfg:      cfg,
-		cache:    runtime.cache,
-		revision: runtime.nextRevision(),
+		cfg:       cfg,
+		keyFilter: keys,
+		keyStats:  &runtime.keyStats,
+		cache:     runtime.cache,
+		revision:  runtime.nextRevision(),
 	}
 
 	engine, _, errEngine := newEngine(pluginDir, cfg)

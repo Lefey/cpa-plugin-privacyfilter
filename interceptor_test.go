@@ -124,7 +124,7 @@ func TestInterceptRequest_SkippedModel(t *testing.T) {
 	resp, err := p.interceptRequest(context.Background(), pluginapi.RequestInterceptRequest{
 		Model: "gpt-4",
 		Body:  []byte(body),
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestInterceptRequest_SkippedRequestedModel(t *testing.T) {
 		Model:          "upstream-model",
 		RequestedModel: "gpt-4",
 		Body:           []byte(body),
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

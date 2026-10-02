@@ -77,6 +77,9 @@ type privacyFilterConfig struct {
 	BlockRuleIDs          []string          `yaml:"block_rule_ids"`
 	Replacements          map[string]string `yaml:"replacements"`
 	Limits                limitsConfig      `yaml:"limits"`
+	// KeyFilter restricts inspection to (or away from) listed downstream API
+	// keys. Inactive when both of its lists are empty.
+	KeyFilter keyFilterConfig `yaml:"key_filter"`
 	// MLAssist is the distilled sensitive-text student (second opinion).
 	// It only rescores texts the deterministic engine left clean; it never
 	// overrides engine findings. Disabled by default.
@@ -116,8 +119,9 @@ func (m mlAssistConfig) enforce() bool {
 func defaultConfig() privacyFilterConfig {
 	jsonLimits := payload.DefaultLimits()
 	return privacyFilterConfig{
-		Mode:    modeRedact,
-		OnError: onErrorBlock,
+		Mode:      modeRedact,
+		OnError:   onErrorBlock,
+		KeyFilter: defaultKeyFilterConfig(),
 		Limits: limitsConfig{
 			MaxBodyBytes:        jsonLimits.MaxBodyBytes,
 			MaxDepth:            jsonLimits.MaxDepth,
@@ -198,6 +202,9 @@ func (cfg privacyFilterConfig) validate() error {
 	}
 	if cfg.MLAssist.Threshold < 0 || cfg.MLAssist.Threshold > 1 {
 		return fmt.Errorf("invalid privacyfilter config: ml_assist.threshold must be within [0,1]")
+	}
+	if _, err := cfg.KeyFilter.compile(); err != nil {
+		return err
 	}
 	seenRules := make(map[string]struct{}, len(cfg.BlockRuleIDs))
 	for _, ruleID := range cfg.BlockRuleIDs {
