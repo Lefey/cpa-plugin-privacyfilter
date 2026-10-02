@@ -29,7 +29,10 @@ type filterMode string
 
 const (
 	modeRedact filterMode = "redact"
-	modeAudit  filterMode = "audit"
+	// modeTokenize replaces findings with reversible tokens and restores them
+	// in the provider response before it reaches the client.
+	modeTokenize filterMode = "tokenize"
+	modeAudit    filterMode = "audit"
 )
 
 type errorPolicy string
@@ -77,6 +80,8 @@ type privacyFilterConfig struct {
 	BlockRuleIDs          []string          `yaml:"block_rule_ids"`
 	Replacements          map[string]string `yaml:"replacements"`
 	Limits                limitsConfig      `yaml:"limits"`
+	// Tokenize configures mode: tokenize. It is ignored by the other modes.
+	Tokenize tokenizeConfig `yaml:"tokenize"`
 	// KeyFilter restricts inspection to (or away from) listed downstream API
 	// keys. Inactive when both of its lists are empty.
 	KeyFilter keyFilterConfig `yaml:"key_filter"`
@@ -122,6 +127,7 @@ func defaultConfig() privacyFilterConfig {
 		Mode:      modeRedact,
 		OnError:   onErrorBlock,
 		KeyFilter: defaultKeyFilterConfig(),
+		Tokenize:  defaultTokenizeConfig(),
 		Limits: limitsConfig{
 			MaxBodyBytes:        jsonLimits.MaxBodyBytes,
 			MaxDepth:            jsonLimits.MaxDepth,
@@ -166,9 +172,12 @@ func parseConfig(raw []byte) (privacyFilterConfig, error) {
 
 func (cfg privacyFilterConfig) validate() error {
 	switch cfg.Mode {
-	case modeRedact, modeAudit:
+	case modeRedact, modeTokenize, modeAudit:
 	default:
-		return fmt.Errorf("invalid privacyfilter config: mode must be %q or %q", modeRedact, modeAudit)
+		return fmt.Errorf("invalid privacyfilter config: mode must be %q, %q, or %q", modeRedact, modeTokenize, modeAudit)
+	}
+	if err := cfg.Tokenize.validate(); err != nil {
+		return err
 	}
 	switch cfg.OnError {
 	case onErrorBlock, onErrorPassthrough:
