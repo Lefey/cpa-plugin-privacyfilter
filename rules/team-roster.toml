@@ -1,0 +1,43 @@
+# Additional rules for cpa-plugin-privacyfilter (gitleaks_mode: extend).
+# Append them to the rules file that gitleaks_toml points to.
+#
+# They hide who is on a team when a chat bot puts a roster into the prompt in
+# this shape, and when a message mentions a member by handle:
+#
+#   Команда:
+#   - id 1: Name Surname, @telegram_handle, Discord: name
+#   - id 2: Other Name, @other_handle
+#
+# The numeric ids stay, so the model can still tell the members apart. A name
+# written in free text ("спроси у Лёхи") is not covered: no rule can know that
+# a word is a person's name.
+
+[[rules]]
+id = "team-roster-name"
+description = "Member name on a roster line"
+regex = '''(?m)^[ \t]*-[ \t]*id[ \t]+\d+:[ \t]*([^,\n@\s](?:[^,\n@]*[^,\n@\s])?)'''
+secretGroup = 1
+keywords = ["id"]
+
+[[rules]]
+id = "team-roster-discord"
+description = "Discord name on a roster line"
+regex = '''(?mi)^[ \t]*-[ \t]*id[ \t]+\d+:[^\n]*?discord:[ \t]*([^,\n\s](?:[^,\n]*[^,\n\s])?)'''
+secretGroup = 1
+keywords = ["discord"]
+
+# A Telegram-style @handle: a letter, then 4 to 31 letters, digits or
+# underscores. The character before @ must not be part of a word, an address or
+# a path, which keeps e-mail addresses out. Common code decorators, annotations
+# and package scopes are allowlisted; one that is missing here is tokenized and
+# restored in the response like any other value.
+[[rules]]
+id = "chat-handle"
+description = "Chat @handle"
+regex = '''(?:^|[^\w@./-])@([A-Za-z][A-Za-z0-9_]{4,31})'''
+secretGroup = 1
+keywords = ["@"]
+
+[[rules.allowlists]]
+description = "decorators, annotations, doc tags, CSS at-rules, package scopes"
+regexes = ['''(?i)^(?:property|staticmethod|classmethod|abstractmethod|cached_property|dataclass|dataclasses|override|overload|functools|contextmanager|pytest|fixture|param|params|return|returns|throws|raises|deprecated|example|typedef|media|import|keyframes|supports|charset|layer|container|types|typescript|eslint|babel|angular|nestjs|testing|anthropic|openai|google|vercel|radix|tanstack|prisma|storybook|emotion|reduxjs|rollup|vitejs|sveltejs|azure|microsoft|playwright|component|injectable|input|output|autowired|service|controller|entity|table|column|getter|setter|builder|notnull|nullable|suppresswarnings|functionalinterface|before|after|beforeeach|aftereach|everyone|channel)$''']

@@ -146,6 +146,9 @@ with `gitleaks_mode: extend`. It catches a value next to `пароль`, `сек
 `токен`, `ключ`, `password` or `passwd` when the value is quoted, or is at
 least six characters long and contains a digit or one of `!@#%^&*`. A
 credential stated without one of those words nearby is still not detected.
+[`rules/team-roster.toml`](rules/team-roster.toml) can be appended to the same
+file for a chat bot that puts a team roster into its prompt: it tokenizes the
+member names on roster lines and every `@handle`.
 
 The request cache retains only hashes and replacement labels. It never retains a
 plaintext finding or a reversible mapping. In `mode: tokenize` a separate token

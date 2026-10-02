@@ -72,7 +72,7 @@
 | `ip` | `[IP]` | `[IP#2]` |
 | `secret` | `[密钥]` | `[密钥#2]` |
 
-内嵌规则识别的是机器生成风格的密钥。以自然语言写出的简短人工密码（例如 `my password is passW0RD!`）不在其中。可选的 [`rules/prose-credentials.toml`](rules/prose-credentials.toml) 补充了这一点：把它复制到插件库旁边，将 `gitleaks_toml` 设为其路径，并设置 `gitleaks_mode: extend`。它会命中紧跟在 `пароль`、`секрет`、`токен`、`ключ`、`password` 或 `passwd` 之后的值，条件是该值带引号，或者长度不少于六个字符且包含数字或 `!@#%^&*` 之一。附近没有这些词的凭证仍然不会被检测到。
+内嵌规则识别的是机器生成风格的密钥。以自然语言写出的简短人工密码（例如 `my password is passW0RD!`）不在其中。可选的 [`rules/prose-credentials.toml`](rules/prose-credentials.toml) 补充了这一点：把它复制到插件库旁边，将 `gitleaks_toml` 设为其路径，并设置 `gitleaks_mode: extend`。它会命中紧跟在 `пароль`、`секрет`、`токен`、`ключ`、`password` 或 `passwd` 之后的值，条件是该值带引号，或者长度不少于六个字符且包含数字或 `!@#%^&*` 之一。附近没有这些词的凭证仍然不会被检测到。对于会把团队成员名单写进 prompt 的聊天机器人，可以把 [`rules/team-roster.toml`](rules/team-roster.toml) 追加到同一个文件：它会把名单行中的成员姓名以及所有 `@handle` 替换为 token。
 
 请求缓存只保留哈希和替换标签，不保留命中明文或可恢复映射。`mode: tokenize` 下另有一个 token vault 在内存中保存原始值，见下文。
 
