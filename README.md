@@ -6,7 +6,10 @@ A protocol-aware, request-side privacy filter for
 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It irreversibly
 redacts selected PII and credentials before supported request text is sent to a
 provider. Requests that cannot be inspected safely are actively terminated by
-default.
+default. Two opt-in features build on that: [`key_filter`](#restricting-the-filter-to-selected-api-keys)
+applies the filter only to chosen client API keys, and
+[`mode: tokenize`](#reversible-tokenization-mode-tokenize) replaces values with
+tokens that are turned back into the original values in the provider response.
 
 > **Do not install the official Plugin Store entry named `privacyfilter`.** As
 > of 2026-09-15, that [Store record](https://github.com/router-for-me/CLIProxyAPI-Plugins-Store/blob/main/registry.json)
@@ -55,8 +58,10 @@ default.
   only. Unknown object keys are rendered as `<redacted>`; the plugin does not log
   matched values, error details, or request bodies.
 
-This is **irreversible redaction**, not reversible tokenization. The plugin does
-not retain original values for restoration.
+The default `mode: redact` is **irreversible redaction**: the plugin does not
+retain original values. Only the opt-in `mode: tokenize` keeps a bounded,
+in-memory mapping so that it can restore values in the response; see
+[Reversible tokenization](#reversible-tokenization-mode-tokenize).
 
 ## Supported request formats
 
@@ -134,7 +139,8 @@ Default placeholders are:
 | `secret` | `[密钥]` | `[密钥#2]` |
 
 The request cache retains only hashes and replacement labels. It never retains a
-plaintext finding or a reversible mapping.
+plaintext finding or a reversible mapping. In `mode: tokenize` a separate token
+vault does hold original values in memory; it is described below.
 
 ## Fixed resource bounds
 
@@ -177,6 +183,11 @@ positive.
   behavior requires Host RPC schema 2 or newer; the plugin negotiates schema 2.
   On a schema-1 Host, registration fails when `on_error: block` or any
   `block_rule_ids` are configured.
+- `mode: tokenize` additionally registers the response and stream-chunk
+  interceptors and negotiates Host RPC schema 5, so that the Host stops
+  resending the request body and chunk history with every stream chunk. On an
+  older Host it still works, at the negotiated schema, with that per-chunk
+  overhead. No other mode changes the registration.
 - The plugin is compiled against CLIProxyAPI SDK v7.2.157. A release must not be
   published until its manifest records the exact official Host image and digest
   used by the isolated integration gate.
@@ -232,8 +243,21 @@ runs later in each interceptor stage.
 A complete plugin-owned example is:
 
 ```yaml
-mode: redact                    # redact | audit
+mode: redact                    # redact | tokenize | audit
 on_error: block                 # block | passthrough
+
+key_filter:                     # inactive while both lists are empty
+  mode: include                 # include | exclude
+  api_keys: []                  # client API keys in plaintext, hashed at load
+  caller_scopes: []             # or precomputed 64-hex caller identifiers
+  on_missing_identity: filter   # filter | skip
+
+tokenize:                       # used only by mode: tokenize
+  token_format: "pf-{kind}-{hash12}"
+  hmac_secret: ""               # empty = random per process
+  max_entries: 100000
+  ttl: 1h
+  restore_scope: caller         # caller | request
 
 gitleaks_toml: ""              # empty always means embedded pinned rules
 # gitleaks_mode: extend         # extend | replace; requires gitleaks_toml
@@ -269,20 +293,25 @@ limits:
   max_findings: 4096
 ```
 
-Configuration uses strict YAML decoding. Unknown fields, invalid enum values,
-duplicate blocking IDs, unsafe replacement strings, multiple YAML documents, or
-limits above a hard maximum make registration fail.
+Configuration uses strict YAML decoding. Unknown fields (including inside
+`key_filter` and `tokenize`), duplicate mapping keys, invalid enum values,
+duplicate blocking IDs, duplicate or empty `key_filter` entries, a malformed
+`token_format`, unsafe replacement strings, multiple YAML documents, or limits
+above a hard maximum make registration fail. Errors never echo an API key, a
+caller identifier, or `hmac_secret`.
 
 | Field | Default | Meaning |
 |---|---:|---|
-| `mode` | `redact` | Redact findings. `audit` counts without mutation or rule-based rejection; inspection errors still follow `on_error`. |
+| `mode` | `redact` | Redact findings. `tokenize` replaces them with tokens that are restored in the response. `audit` counts without mutation or rule-based rejection; inspection errors still follow `on_error`. |
+| `key_filter` | inactive | Apply the filter only to (`include`) or to all but (`exclude`) the listed client API keys. See below. |
+| `tokenize` | values above | Token format, HMAC secret, vault bounds and restore scope for `mode: tokenize`. See below. |
 | `on_error` | `block` | Actively terminate inspection failures. `passthrough` is an explicit fail-open bypass. |
 | `gitleaks_toml` | `""` | Custom TOML path. Empty always uses embedded rules and never consults an adjacent sidecar. |
 | `gitleaks_mode` | omitted | With a custom path, omitted preserves legacy replace behavior; otherwise explicitly `extend` or `replace`. |
 | `allow_unsupported_rules` | `false` | Reject unsupported custom-rule semantics; `true` allows explicitly reported skips. |
 | `block_rule_ids` | `[]` | In redact mode, terminate with 422 instead of replacing findings from these exact rule IDs. |
 | `replacements` | typed defaults | Override the six placeholder kinds; empty removes the matched value. |
-| `skip_models` / `skip_formats` | `[]` | Trusted, explicit inspection bypasses. |
+| `skip_models` / `skip_formats` | `[]` | Trusted, explicit inspection bypasses. They are evaluated before `key_filter`. |
 | `ml_assist` | disabled | Distilled sensitive-text student rescoring engine-clean texts. `audit` counts `ml_flagged` in logs only; `enforce` also redacts the whole span (downgraded to audit when plugin `mode` is `audit`). Never overrides engine findings. |
 | `limits` | values above | Request-wide bounds. Payload zeros select bounded defaults; detector limits must be positive. No value may exceed its hard maximum. |
 
@@ -295,6 +324,225 @@ text has no filesystem path. Registration fails if the bytes or the exact
 nine-entry compatibility report changes. Run
 `scripts/update-rules.sh --check` to verify the local snapshot; the update command
 fetches only that immutable commit and checks the expected digest.
+
+## Restricting the filter to selected API keys
+
+`key_filter` applies the plugin only to requests authenticated with particular
+downstream client keys, that is, the keys under the top-level `api-keys` of the
+CLIProxyAPI configuration. Every other request passes through byte-for-byte.
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    privacyfilter:
+      enabled: true
+      key_filter:
+        mode: include
+        api_keys:
+          - "sk-my-private-key"
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `mode` | `include` | `include` inspects only the listed keys. `exclude` inspects every key except the listed ones. |
+| `api_keys` | `[]` | Client API keys in plaintext. Each is hashed when the configuration loads and is not retained. |
+| `caller_scopes` | `[]` | The same identities as precomputed identifiers, for operators who do not want a plaintext key in the plugin stanza. |
+| `on_missing_identity` | `filter` | What to do after credential selection when the Host supplied no caller identity. `filter` inspects (fail closed); `skip` passes the request through. |
+
+Both lists empty means the key filter is off and every request is inspected,
+exactly as without the section. `mode` and `on_missing_identity` alone do not
+activate it.
+
+**How a key is matched.** The Host never hands the raw API key to an
+interceptor. It supplies `caller_scope`, the lowercase hexadecimal SHA-256 of
+`cli-proxy-api:caller-scope:v1`, one NUL byte, and the trimmed key. The plugin
+derives the same value from each `api_keys` entry and compares identifiers. To
+list an identifier instead of a key, compute it once:
+
+```bash
+printf 'cli-proxy-api:caller-scope:v1\0%s' 'sk-my-private-key' | sha256sum
+```
+
+and put the 64 hexadecimal characters under `caller_scopes`. The two lists may
+be combined; an identity that appears twice, in either form, is rejected.
+
+**Order of checks.** For every interceptor call:
+
+1. `skip_models` / `skip_formats`: a match bypasses inspection regardless of the
+   key.
+2. `key_filter`: if active, the caller identity decides between inspecting and
+   passing through.
+3. Inspection in the configured `mode`, including `block_rule_ids`, `on_error`
+   and `ml_assist`.
+
+A request is therefore inspected only if no skip matches **and** the key filter
+selects it. A request the key filter passes through is never modified and never
+rejected, not even when its body is malformed, and in `mode: tokenize` neither
+it nor its response is touched.
+
+**Interceptor stages.** The Host calls a request interceptor before and after
+it selects the upstream credential. The caller identity comes from client
+authentication, which precedes both calls, so the decision is normally made at
+the first one. If the identity is absent before credential selection, the
+plugin does nothing at that stage; after credential selection it applies
+`on_missing_identity`. The request cache that recognises an already inspected
+body on the second call works as before.
+
+**Logging.** Keys and caller identifiers are never logged. Registration logs
+the mode and the number of configured identities. At debug level each decision
+is logged as `filtered` or `skipped_by_key` together with running totals.
+
+**Limitations.**
+
+- `key_filter` is one more way around the filter. A request from an unlisted
+  key (or, with `exclude`, a listed one) reaches the provider uninspected, the
+  same as `skip_models`.
+- It covers model-execution requests that reach the request interceptors. It
+  has no effect on `/v1/models`, management routes, or any other endpoint that
+  does not go through them.
+- Matching depends on the Host's `caller_scope` derivation in the pinned SDK. If
+  a Host release changes it, plaintext `api_keys` stop matching: an `include`
+  list then filters nothing and an `exclude` list filters everything. Revalidate
+  after every Host upgrade.
+- If client authentication is disabled there is no identity at all; every
+  request then follows `on_missing_identity`.
+- Keys entered through the management panel are shown there in plaintext, as
+  they are in `config.yaml`. Use `caller_scopes` to avoid that.
+
+## Reversible tokenization (`mode: tokenize`)
+
+In this mode a detected value is replaced with a token such as
+`pf-secret-3f9a1c0b7d2e`. The model sees and can reuse the token in code,
+commands and configuration. Before the response reaches the client, the plugin
+replaces the token with the original value again. The provider never receives
+the value.
+
+```yaml
+mode: tokenize
+tokenize:
+  token_format: "pf-{kind}-{hash12}"
+  hmac_secret: ""
+  max_entries: 100000
+  ttl: 1h
+  restore_scope: caller
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `token_format` | `pf-{kind}-{hash12}` | Literal text may use only `[a-z0-9-]`, so a token never needs JSON escaping. `{hashN}` (N from 8 to 64) is required exactly once; `{kind}` is optional and expands to `email`, `phone`, `idcard`, `bankcard`, `ip` or `secret`. |
+| `hmac_secret` | `""` | Key for the token MAC, 16 to 1024 bytes. Empty selects a random key generated once per process. |
+| `max_entries` | `100000` | Upper bound on stored token-to-value mappings across all callers (hard maximum 1,000,000). The least recently used mapping is evicted first. |
+| `ttl` | `1h` | Sliding lifetime of a mapping, refreshed whenever the token is issued or restored (1s to 168h). It is also the idle lifetime of a response session. |
+| `restore_scope` | `caller` | Which tokens a response may resolve: those issued to the same client API key (`caller`) or only those issued for the same request (`request`). |
+
+**Tokens are deterministic.** A token is `HMAC-SHA256(hmac_secret, caller
+identity, kind, value)` truncated to N hexadecimal characters. The same value
+from the same API key always yields the same token while the secret is
+unchanged, which keeps multi-turn conversations and provider prompt caching
+stable. With an empty `hmac_secret` the key is random per process, so **tokens
+change after a restart** (a plugin reconfigure keeps the key). Set
+`hmac_secret` if tokens must survive restarts; treat it like any other secret,
+and note that changing it changes every token. Because the caller identity is
+part of the MAC, two API keys get unrelated tokens for the same value.
+
+**Restoration is isolated.** Mappings are stored per caller (or per request)
+and a response looks up only its own partition. If someone writes another
+caller's token into a prompt and asks the model to repeat it, the token comes
+back unchanged; it is counted as `unresolved`. With `restore_scope: caller`
+every client using one API key is a single trust domain: a token issued in one
+conversation can be restored in another conversation under the same key. That
+is what makes server-side history (for example Responses
+`previous_response_id`) work. `restore_scope: request` removes it: a response
+resolves only tokens issued for its own request, and the mappings are destroyed
+when the request ends. A request without an authenticated caller always uses
+request scope.
+
+**Storage.** Mappings live only in process memory, bounded by `max_entries` and
+`ttl`. They are never written to disk or to logs. Response-side buffers and, in
+request scope, the mappings themselves are released when the Host reports the
+request complete, including client cancellation and upstream failure. Shutdown
+clears everything.
+
+**What is restored.** Only an exact token. A token the model altered (different
+case, truncated, edited) is not guessed at. Supported response formats are
+`openai`, `openai-response`, `claude`, `gemini` and `interactions`:
+
+- Non-streaming: every JSON string value, including tool-call arguments,
+  `tool_use.input`, Gemini `functionCall.args` and structured output. A string
+  that itself contains a JSON document is restored one level down, so the value
+  is escaped correctly for the inner string and again for the outer one. Bytes
+  that carry no token are not rewritten.
+- Streaming: `delta.content` and `tool_calls[].function.arguments`,
+  `response.output_text.delta` and function/custom-tool argument deltas,
+  `content_block_delta` (`text_delta`, `input_json_delta`), Gemini text parts,
+  and Interactions `step.delta`. Each block or tool call has its own buffer. A
+  token split across chunks is reassembled: the plugin withholds only a trailing
+  run that could still become a token (at most one byte less than a token) and
+  releases it as soon as it stops matching. When a block ends, a withheld tail
+  is merged into the chunk that carries `finish_reason` / `finishReason`, or
+  sent as one extra delta just before `content_block_stop`, `step.stop` or the
+  Responses `*.done` event. Complete strings in terminal events
+  (`response.output_text.done`, `response.completed`, ...) are restored too.
+
+Model reasoning and integrity data are deliberately **not** restored:
+`thinking`, `reasoning`, `reasoning_content`, `reasoning_details`, Gemini
+thought parts, signatures and `encrypted_content`. Rewriting signed reasoning
+would break its replay. A token may therefore remain visible in a reasoning
+trace. Usage, service and keep-alive events are passed through unchanged.
+
+**Requests.** `block_rule_ids` and inspection errors are evaluated before any
+mapping is stored, so a rejected request leaves nothing behind. On the second
+interceptor call, tokens already issued to the caller are recognised and left
+as they are; a token is never turned back into its value on the request path.
+A value the client received restored and sends again as conversation history
+gets the same token, provided the detector finds it again in its new context.
+`mode: tokenize` and `key_filter` compose: a request passed through by key is
+neither tokenized nor restored.
+
+**Logging.** Only counters: `tokenized` on the request, and `restored`,
+`unresolved`, `unflushed` and `restore_failed` when the request completes.
+Tokens, values and API keys are never logged.
+
+**Limitations.**
+
+- The Host offers no end-of-stream callback and no way to fail a response. If a
+  stream ends without its protocol's terminal event (upstream abort), a
+  withheld tail of at most 23 characters with the default format is not
+  delivered. The tail is a prefix of a token, never a value. It is reported as
+  `unflushed`.
+- An error while rewriting a response leaves that response, or the rest of that
+  stream, with tokens instead of values. Nothing leaks, but the client sees the
+  token. This is logged with `restore_failed`.
+- **Interceptor ordering.** The Host runs request and response interceptors in
+  the same priority order and does not tell a plugin about its neighbours. A
+  request interceptor that runs before this plugin sees original values; a
+  response or stream interceptor that runs after it sees restored values. To
+  keep other plugins away from plaintext on the request side this plugin must
+  run first, which also makes it restore first on the response side; no
+  priority satisfies both. Run it as the only body-rewriting interceptor, or
+  accept one of the two exposures. A response interceptor that runs earlier and
+  drops or re-frames chunks can also prevent restoration. The plugin logs a
+  warning with its own priority at every registration in this mode.
+- Streamed tool arguments are escaped for the string literal the token sits in.
+  A value with quotes or backslashes inside JSON that is itself nested in a
+  string of streamed arguments is escaped one level only. Non-streaming
+  responses handle any nesting up to four levels.
+- Streamed text is treated as JSON (structured output) when it starts with `{`
+  or `[`. Text in a Markdown code fence is restored verbatim, so a value with
+  quotes can make JSON inside the fence invalid.
+- The extra delta that delivers a withheld tail before a Responses `*.done`
+  event reuses the previous delta's `sequence_number`.
+- Gemini streaming with an explicit non-SSE `alt` transport (JSON-array
+  fragments) is not parsed; tokens stay in place and are reported.
+- If the 48-bit default hash of two different values of one caller collides,
+  the second value is redacted irreversibly instead of tokenized.
+- Under memory pressure (`max_entries`) or after `ttl`, a mapping can disappear
+  while a conversation still refers to its token; the token then stays
+  unresolved.
+- Original values are held in process memory until they expire. `hmac_secret`
+  is visible in the management panel and in `config.yaml`.
 
 ## Failure behavior
 
@@ -328,7 +576,7 @@ Release:
    by a later translator. A true final-egress guarantee requires a Host-owned
    post-translation hook or an external egress proxy.
 4. Provider responses, SSE streams, and response-side tool output are not
-   filtered.
+   filtered. `mode: tokenize` rewrites them only to put original values back.
 5. Binary/referenced content is not decoded: images, audio, video, PDF/Office,
    inline/base64 data, and remote files receive no OCR or document extraction.
 6. Exact protocol tables are pinned. Newly introduced string-bearing fields may
@@ -336,8 +584,8 @@ Release:
 7. Detection remains heuristic. Exact credential-field coverage intentionally
    avoids broad substring matching; generic detectors can still have false
    positives and false negatives.
-8. `skip_models`, `skip_formats`, `on_error: passthrough`, and `mode: audit` are
-   explicit security bypasses.
+8. `skip_models`, `skip_formats`, `key_filter`, `on_error: passthrough`, and
+   `mode: audit` are explicit security bypasses.
 
 ## Build and verification
 
@@ -372,6 +620,7 @@ python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 ./.github/scripts/generate-license-report.py --check
 go test ./payload -run='^$' -fuzz='^FuzzScanNoPanic$' -fuzztime=15s
 go test ./internal/privacyengine -run='^$' -fuzz='^FuzzNoPanic$' -fuzztime=15s
+go test . -run='^$' -fuzz='^FuzzStreamRestoreRandomSplits$' -fuzztime=15s
 ```
 
 The release workflow publishes exactly five targets: Linux amd64/arm64, Darwin
@@ -389,6 +638,10 @@ publishing.
 - Detector source: [PackyMe/privacy-filter](https://github.com/PackyMe/privacy-filter)
 - Embedded rules: [Gitleaks](https://github.com/gitleaks/gitleaks)
 - Plugin SDK: [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+- Design references for `key_filter` and `mode: tokenize` (no code was copied):
+  [DoingDog/cpa-plugin-censorship](https://github.com/DoingDog/cpa-plugin-censorship),
+  [szxypi/cpa-plugin-privacyfilter](https://github.com/szxypi/cpa-plugin-privacyfilter),
+  [jianhongyu136/plugin-privacy-filter](https://github.com/jianhongyu136/plugin-privacy-filter)
 
 This repository is MIT licensed. See [LICENSE](LICENSE), [NOTICE](NOTICE), and
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for exact provenance,
