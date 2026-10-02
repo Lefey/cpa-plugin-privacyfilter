@@ -672,3 +672,49 @@ func TestStreamSessionEvictionAndExpiry(t *testing.T) {
 		t.Fatalf("expired sessions were retained: %d", registry.len())
 	}
 }
+
+func TestStreamUnparsedFragmentKeepsTokenAndIsFlagged(t *testing.T) {
+	c := newStreamCase(t, "req-unparsed")
+	p := c.plugin
+	runStreamInit(t, p, c.requestID, "gemini")
+	// A JSON-array transport fragment is not an event this plugin parses.
+	fragment := `,{"candidates":[{"content":{"parts":[{"text":"` + c.token + `"}]}}]}`
+	resp, err := p.InterceptStreamChunk(context.Background(), pluginapi.StreamChunkInterceptRequest{
+		RequestID: c.requestID, SourceFormat: "gemini", ChunkIndex: 0, Body: []byte(fragment),
+	})
+	if err != nil || resp.DropChunk || (resp.Body != nil && string(resp.Body) != fragment) {
+		t.Fatal("an unparsed fragment was rewritten or dropped")
+	}
+	if p.tok.sessions.get(c.requestID).counters.failed != 1 {
+		t.Fatal("a token delivered unrestored was not flagged")
+	}
+	completeRequest(p, c.requestID, pluginapi.RequestCompletionSucceeded)
+	if p.tokRuntime.stats.failed.Load() != 1 {
+		t.Fatal("restore failure did not reach the completion counters")
+	}
+}
+
+func TestStreamCarryIsBounded(t *testing.T) {
+	c := newStreamCase(t, "req-carry")
+	p := c.plugin
+	runStreamInit(t, p, c.requestID, "claude")
+	line := []byte("event: " + strings.Repeat("x", 1024) + "\n")
+	delivered := 0
+	for index := 0; index < 64; index++ {
+		resp, err := p.InterceptStreamChunk(context.Background(), pluginapi.StreamChunkInterceptRequest{
+			RequestID: c.requestID, SourceFormat: "claude", ChunkIndex: index, Body: line,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resp.DropChunk {
+			delivered++
+		}
+		if carried := len(p.tok.sessions.get(c.requestID).stream.carry); carried > maxStreamCarryBytes {
+			t.Fatalf("carry grew to %d bytes", carried)
+		}
+	}
+	if delivered == 0 {
+		t.Fatal("event lines without data were withheld forever")
+	}
+}

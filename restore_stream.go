@@ -12,9 +12,14 @@ import (
 	"github.com/ahoo/cpa-plugin-privacyfilter/walker"
 )
 
-// maxStreamChannels bounds the reassembly buffers of one stream. A delta on a
-// channel beyond the bound is restored without cross-chunk reassembly.
-const maxStreamChannels = 1024
+const (
+	// maxStreamChannels bounds the reassembly buffers of one stream. A delta on
+	// a channel beyond the bound is restored without cross-chunk reassembly.
+	maxStreamChannels = 1024
+	// maxStreamCarryBytes bounds the "event:" lines held back while their
+	// "data:" line is awaited. A longer run is delivered as it arrived.
+	maxStreamCarryBytes = 16 << 10
+)
 
 // streamChannel reassembles one independently streamed string: one text block,
 // one tool call's arguments, one candidate. It withholds only a trailing run
@@ -278,7 +283,7 @@ func (sp *streamProcessor) chunk(body []byte) (out []byte, drop bool) {
 		buffer.Write(content[end:])
 		buffer.Write(ending)
 	}
-	if blockHasEvent && !blockHasData && blockStart < buffer.Len() {
+	if blockHasEvent && !blockHasData && blockStart < buffer.Len() && buffer.Len()-blockStart <= maxStreamCarryBytes {
 		sp.state.carry = append([]byte(nil), buffer.Bytes()[blockStart:]...)
 		buffer.Truncate(blockStart)
 	}
