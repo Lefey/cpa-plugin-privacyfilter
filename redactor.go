@@ -489,6 +489,11 @@ func (p *privacyFilterPlugin) sanitizeText(
 	fieldContext privacyengine.FieldContext,
 	mlFlagged *int,
 ) (string, int, bool, error) {
+	if tokens, ok := renderer.(*tokenRenderer); ok {
+		if spans := tokens.knownSpans(text); len(spans) != 0 {
+			return p.sanitizeAroundTokens(ctx, text, spans, budget, renderer, fieldContext, mlFlagged)
+		}
+	}
 	preservePlaceholder := false
 	if requestRenderer, ok := renderer.(*requestRenderer); ok {
 		preservePlaceholder = requestRenderer.producedPlaceholder(text)
@@ -521,6 +526,53 @@ func (p *privacyFilterPlugin) sanitizeText(
 		}
 	}
 	return result.Redacted, len(result.Findings), result.Hit(), nil
+}
+
+// sanitizeAroundTokens inspects the text between tokens this request already
+// issued and leaves the tokens themselves untouched. A second interceptor pass
+// therefore neither detects a token as a secret nor wraps it in another token,
+// and a token is never turned back into its value on the request path.
+func (p *privacyFilterPlugin) sanitizeAroundTokens(
+	ctx context.Context,
+	text string,
+	spans [][2]int,
+	budget *privacyengine.Budget,
+	renderer privacyengine.Renderer,
+	fieldContext privacyengine.FieldContext,
+	mlFlagged *int,
+) (string, int, bool, error) {
+	var out strings.Builder
+	out.Grow(len(text))
+	findings := 0
+	changed := false
+	previous := 0
+	inspect := func(segment string) error {
+		if segment == "" {
+			return nil
+		}
+		redacted, count, hit, err := p.sanitizeText(ctx, segment, budget, renderer, fieldContext, mlFlagged)
+		if err != nil {
+			return err
+		}
+		findings += count
+		changed = changed || hit
+		out.WriteString(redacted)
+		return nil
+	}
+	for _, span := range spans {
+		if err := inspect(text[previous:span[0]]); err != nil {
+			return text, findings, false, err
+		}
+		out.WriteString(text[span[0]:span[1]])
+		previous = span[1]
+	}
+	if err := inspect(text[previous:]); err != nil {
+		return text, findings, false, err
+	}
+	if !changed {
+		return text, findings, false, nil
+	}
+	return out.String(), findings, true, nil
 }
 
 // mlSecondOpinion rescores text the deterministic engine left clean with the

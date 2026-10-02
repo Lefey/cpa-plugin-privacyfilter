@@ -85,7 +85,7 @@ func TestNegotiateSchemaVersion(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := negotiateSchemaVersion(tc.host); got != tc.want {
+			if got := negotiateSchemaVersion(tc.host, implementedSchemaVersion); got != tc.want {
 				t.Fatalf("negotiateSchemaVersion(%d) = %d, want %d", tc.host, got, tc.want)
 			}
 		})

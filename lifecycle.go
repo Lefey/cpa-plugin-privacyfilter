@@ -9,14 +9,18 @@ import (
 
 var _ pluginapi.RequestLifecyclePlugin = (*privacyFilterPlugin)(nil)
 
-// HandleRequestComplete releases the request fingerprint and request-local
-// renderer state after the final response or stream chunk. Complete is
-// idempotent; TTL/LRU remain a fallback for missing best-effort notifications.
+// HandleRequestComplete releases the request fingerprint, request-local
+// renderer state, and (in tokenize mode) the response restore session after
+// the final response or stream chunk. Complete is idempotent; TTL/LRU remain a
+// fallback for missing best-effort notifications.
 func (p *privacyFilterPlugin) HandleRequestComplete(_ context.Context, done pluginapi.RequestCompletion) error {
 	if p == nil {
 		return nil
 	}
 	releaseRequestScanState(p.cache, done)
+	if p.tok != nil {
+		releaseRestoreSession(p.tokRuntime, done)
+	}
 	return nil
 }
 

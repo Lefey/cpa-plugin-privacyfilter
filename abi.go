@@ -77,6 +77,10 @@ const (
 	// of this request-only implementation.
 	implementedSchemaVersion uint32 = 2
 	legacySchemaVersion      uint32 = 1
+	// tokenizeSchemaVersion is negotiated only in tokenize mode. From schema 3
+	// the Host stops resending the request bodies, and from schema 5 the chunk
+	// history, with every stream chunk; the stream interceptor needs neither.
+	tokenizeSchemaVersion uint32 = 5
 
 	// maxABIRequestBytes is checked before C.GoBytes duplicates the host payload.
 	// Request bodies have their own tighter configurable limit at the walker.
@@ -125,6 +129,10 @@ type abiRegistration struct {
 type abiCapabilities struct {
 	RequestInterceptor     bool `json:"request_interceptor"`
 	RequestLifecyclePlugin bool `json:"request_lifecycle_plugin"`
+	// The response hooks exist only in tokenize mode. They are omitted when
+	// false so every other mode registers exactly as it did before.
+	ResponseInterceptor    bool `json:"response_interceptor,omitempty"`
+	StreamChunkInterceptor bool `json:"response_stream_interceptor,omitempty"`
 }
 
 func main() {}
@@ -318,6 +326,7 @@ func PrivacyFilterPluginShutdown() {
 	if runtime != nil && runtime.cache != nil {
 		runtime.cache.Clear()
 	}
+	runtime.loadedTokenRuntime().clear()
 	privacyFilterABIState.Lock()
 	if privacyFilterABIState.runtime == runtime {
 		privacyFilterABIState.runtime = nil
@@ -356,6 +365,20 @@ func handlePrivacyFilterABIMethod(ctx context.Context, method string, request []
 		}
 		resp, errCall := p.InterceptRequestAfterAuth(ctx, req.RequestInterceptRequest)
 		return abiOKEnvelopeWithError(resp, errCall)
+	case pluginabi.MethodResponseInterceptAfter:
+		var req pluginapi.ResponseInterceptRequest
+		if errDecode := json.Unmarshal(request, &req); errDecode != nil {
+			return nil, errDecode
+		}
+		resp, errCall := p.InterceptResponse(ctx, req)
+		return abiOKEnvelopeWithError(resp, errCall)
+	case pluginabi.MethodResponseInterceptStreamChunk:
+		var req pluginapi.StreamChunkInterceptRequest
+		if errDecode := json.Unmarshal(request, &req); errDecode != nil {
+			return nil, errDecode
+		}
+		resp, errCall := p.InterceptStreamChunk(ctx, req)
+		return abiOKEnvelopeWithError(resp, errCall)
 	default:
 		return abiErrorEnvelope("unknown_method", "unknown method: "+method), nil
 	}
@@ -374,6 +397,7 @@ func handlePrivacyFilterRequestComplete(_ context.Context, request []byte) ([]by
 	privacyFilterABIState.RUnlock()
 	if runtime != nil {
 		releaseRequestScanState(runtime.cache, req)
+		releaseRestoreSession(runtime.loadedTokenRuntime(), req)
 	}
 	return abiOKEnvelope(struct{}{})
 }
@@ -398,7 +422,11 @@ func handlePrivacyFilterRegister(request []byte) ([]byte, error) {
 	if !ok || p == nil {
 		return nil, fmt.Errorf("privacyfilter plugin registration returned invalid interceptor")
 	}
-	negotiatedSchema := negotiateSchemaVersion(req.SchemaVersion)
+	wantSchema := implementedSchemaVersion
+	if p.tok != nil {
+		wantSchema = tokenizeSchemaVersion
+	}
+	negotiatedSchema := negotiateSchemaVersion(req.SchemaVersion, wantSchema)
 	if negotiatedSchema < implementedSchemaVersion &&
 		(p.cfg.OnError == onErrorBlock || len(p.blockRuleIDs) > 0) {
 		return nil, fmt.Errorf("privacyfilter: fail-closed mode requires host schema %d or newer", implementedSchemaVersion)
@@ -415,24 +443,48 @@ func handlePrivacyFilterRegister(request []byte) ([]byte, error) {
 		"version":  pluginVersion,
 		"revision": pluginRevision,
 	}).Info("privacyfilter plugin registered")
+	if p.keyFilter.active() {
+		log.WithFields(log.Fields{
+			"mode":                string(p.cfg.KeyFilter.Mode),
+			"identities":          len(p.keyFilter.scopes),
+			"on_missing_identity": string(p.cfg.KeyFilter.OnMissingIdentity),
+		}).Info("privacyfilter: key filter active")
+	}
+	if p.tok != nil {
+		// The Host runs request and response interceptors in the same priority
+		// order and does not tell a plugin about its neighbours, so the
+		// operator has to check the ordering; say so on every registration.
+		log.WithFields(log.Fields{
+			"priority":      p.cfg.Priority,
+			"schema":        negotiatedSchema,
+			"restore_scope": string(p.cfg.Tokenize.RestoreScope),
+		}).Warn("privacyfilter: tokenize is active; response interceptors that run after this plugin see restored values, and request interceptors that run before it see original values")
+		if negotiatedSchema < tokenizeSchemaVersion {
+			log.WithField("schema", negotiatedSchema).Warn("privacyfilter: Host schema is older than 5; every stream chunk carries the request body and chunk history")
+		}
+	}
 	return abiOKEnvelope(abiRegistration{
 		SchemaVersion: negotiatedSchema,
 		Metadata:      plugin.Metadata,
 		Capabilities: abiCapabilities{
 			RequestInterceptor:     plugin.Capabilities.RequestInterceptor != nil,
 			RequestLifecyclePlugin: plugin.Capabilities.RequestLifecyclePlugin != nil,
+			ResponseInterceptor:    plugin.Capabilities.ResponseInterceptor != nil,
+			StreamChunkInterceptor: plugin.Capabilities.StreamChunkInterceptor != nil,
 		},
 	})
 }
 
-func negotiateSchemaVersion(hostSchema uint32) uint32 {
+// negotiateSchemaVersion returns the newest schema both sides support, where
+// want is the newest one this configuration uses.
+func negotiateSchemaVersion(hostSchema, want uint32) uint32 {
 	if hostSchema == 0 {
 		hostSchema = legacySchemaVersion
 	}
-	if hostSchema < implementedSchemaVersion {
+	if hostSchema < want {
 		return hostSchema
 	}
-	return implementedSchemaVersion
+	return want
 }
 
 func handlePrivacyFilterQuiesce() ([]byte, error) {

@@ -21,8 +21,11 @@ type privacyFilterPlugin struct {
 	blockRuleIDs map[string]struct{}
 	keyFilter    *keyFilter
 	keyStats     *keyFilterStats
-	cache        *RequestScanCache
-	revision     uint64
+	// tok is non-nil only in mode: tokenize.
+	tok        *tokenizer
+	tokRuntime *tokenRuntime
+	cache      *RequestScanCache
+	revision   uint64
 }
 
 var _ pluginapi.RequestInterceptor = (*privacyFilterPlugin)(nil)
@@ -86,16 +89,24 @@ func (p *privacyFilterPlugin) interceptRequest(ctx context.Context, req pluginap
 		return pluginapi.RequestInterceptResponse{}, nil
 	}
 	rendererState := state.GetOrCreateRendererState(func() any {
-		return newRequestRenderer(p.renderer)
+		return p.newRequestRendererState(req.RequestID, callerScope)
 	})
-	renderer, ok := rendererState.(*requestRenderer)
+	renderer, ok := rendererState.(privacyengine.Renderer)
 	if !ok || renderer == nil {
 		return p.handleFailure(req.SourceFormat, privacyengine.ErrInternalFailure), nil
 	}
+	tokens, tokenizing := renderer.(*tokenRenderer)
 
 	result, errSanitize := p.sanitizeRequestWithRenderer(ctx, req.SourceFormat, req.Body, renderer)
 	if errSanitize != nil {
+		if tokenizing {
+			tokens.discard()
+		}
 		return p.handleFailure(req.SourceFormat, errSanitize), nil
+	}
+	tokenized := 0
+	if tokenizing {
+		tokenized = tokens.commit()
 	}
 	if result.changed {
 		state.Record(req.Body, result.body)
@@ -103,7 +114,7 @@ func (p *privacyFilterPlugin) interceptRequest(ctx context.Context, req pluginap
 		state.Record(req.Body, nil)
 	}
 	if result.findings > 0 || result.mlFlagged > 0 || result.unsupported > 0 {
-		log.WithFields(log.Fields{
+		fields := log.Fields{
 			"source_format": safeLogValue(req.SourceFormat),
 			"model":         safeLogValue(req.RequestedModel),
 			"mode":          string(p.cfg.Mode),
@@ -112,12 +123,28 @@ func (p *privacyFilterPlugin) interceptRequest(ctx context.Context, req pluginap
 			"targets":       result.targets,
 			"opaque":        result.opaque,
 			"unsupported":   result.unsupported,
-		}).Info("privacyfilter: request inspection complete")
+		}
+		if tokenizing {
+			fields["tokenized"] = tokenized
+		}
+		log.WithFields(fields).Info("privacyfilter: request inspection complete")
 	}
 	if !result.changed {
 		return pluginapi.RequestInterceptResponse{}, nil
 	}
 	return pluginapi.RequestInterceptResponse{Body: result.body}, nil
+}
+
+// newRequestRendererState picks the renderer a request keeps across both
+// interceptor passes: reversible tokens in tokenize mode, numbered irreversible
+// placeholders otherwise.
+func (p *privacyFilterPlugin) newRequestRendererState(requestID, callerScope string) privacyengine.Renderer {
+	if p.tok != nil {
+		if tokens := p.tok.newRenderer(requestID, callerScope, p.renderer); tokens != nil {
+			return tokens
+		}
+	}
+	return newRequestRenderer(p.renderer)
 }
 
 func (p *privacyFilterPlugin) handleFailure(sourceFormat string, err error) pluginapi.RequestInterceptResponse {

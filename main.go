@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,34 @@ type runtimeState struct {
 	cache    *RequestScanCache
 	revision atomic.Uint64
 	keyStats keyFilterStats
+
+	// tokens is created by the first mode: tokenize configuration and then
+	// kept, so issued mappings and the process HMAC key survive a reconfigure.
+	tokensMu sync.Mutex
+	tokens   *tokenRuntime
+}
+
+func (r *runtimeState) tokenRuntime(cfg tokenizeConfig) (*tokenRuntime, error) {
+	r.tokensMu.Lock()
+	defer r.tokensMu.Unlock()
+	if r.tokens == nil {
+		tokens, err := newTokenRuntime(cfg)
+		if err != nil {
+			return nil, err
+		}
+		r.tokens = tokens
+	}
+	return r.tokens, nil
+}
+
+// loadedTokenRuntime returns the tokenize state if any configuration created it.
+func (r *runtimeState) loadedTokenRuntime() *tokenRuntime {
+	if r == nil {
+		return nil
+	}
+	r.tokensMu.Lock()
+	defer r.tokensMu.Unlock()
+	return r.tokens
 }
 
 func newRuntimeState() *runtimeState {
@@ -79,6 +108,28 @@ func buildPluginWithRuntime(configYAML []byte, pluginDir string, runtime *runtim
 	p.engine = engine
 	p.renderer = renderer
 	p.blockRuleIDs = cfg.blockRuleSet()
+	if cfg.Mode == modeTokenize {
+		tokens, errTokens := runtime.tokenRuntime(cfg.Tokenize)
+		if errTokens != nil {
+			return pluginapi.Plugin{}, errTokens
+		}
+		tok, errTokenizer := newTokenizer(cfg.Tokenize, tokens)
+		if errTokenizer != nil {
+			return pluginapi.Plugin{}, errTokenizer
+		}
+		p.tok = tok
+		p.tokRuntime = tokens
+	}
+	capabilities := pluginapi.Capabilities{
+		RequestInterceptor:     p,
+		RequestLifecyclePlugin: p,
+	}
+	if p.tok != nil {
+		// Response hooks are declared only in tokenize mode, so every other
+		// mode keeps the request-only registration and its Host overhead.
+		capabilities.ResponseInterceptor = p
+		capabilities.StreamChunkInterceptor = p
+	}
 
 	return pluginapi.Plugin{
 		SchemaVersion: implementedSchemaVersion,
@@ -91,8 +142,8 @@ func buildPluginWithRuntime(configYAML []byte, pluginDir string, runtime *runtim
 				{
 					Name:        "mode",
 					Type:        pluginapi.ConfigFieldTypeEnum,
-					EnumValues:  []string{string(modeRedact), string(modeAudit)},
-					Description: "Redact findings or audit without modifying requests.",
+					EnumValues:  []string{string(modeRedact), string(modeTokenize), string(modeAudit)},
+					Description: "Redact findings, replace them with tokens restored in the response, or audit without modifying requests.",
 				},
 				{
 					Name:        "on_error",
@@ -132,6 +183,16 @@ func buildPluginWithRuntime(configYAML []byte, pluginDir string, runtime *runtim
 					Description: "Bounded JSON scanning, text, finding, and replacement budgets.",
 				},
 				{
+					Name:        "key_filter",
+					Type:        pluginapi.ConfigFieldTypeObject,
+					Description: "Inspect only (mode include) or all but (mode exclude) the listed client api_keys or caller_scopes; on_missing_identity is filter or skip. Empty lists inspect every request.",
+				},
+				{
+					Name:        "tokenize",
+					Type:        pluginapi.ConfigFieldTypeObject,
+					Description: "Options for mode tokenize: token_format, hmac_secret, max_entries, ttl, and restore_scope (caller or request).",
+				},
+				{
 					Name:        "skip_models",
 					Type:        pluginapi.ConfigFieldTypeArray,
 					Description: "Trusted break-glass model names to bypass inspection.",
@@ -143,9 +204,6 @@ func buildPluginWithRuntime(configYAML []byte, pluginDir string, runtime *runtim
 				},
 			},
 		},
-		Capabilities: pluginapi.Capabilities{
-			RequestInterceptor:     p,
-			RequestLifecyclePlugin: p,
-		},
+		Capabilities: capabilities,
 	}, nil
 }
