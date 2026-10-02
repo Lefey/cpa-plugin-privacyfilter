@@ -432,8 +432,8 @@ func configFieldsExact(fields []pluginConfigField) bool {
 		{
 			Name:        "mode",
 			Type:        "enum",
-			EnumValues:  []string{"redact", "audit"},
-			Description: "Redact findings or audit without modifying requests.",
+			EnumValues:  []string{"redact", "tokenize", "audit"},
+			Description: "Redact findings, replace them with tokens restored in the response, or audit without modifying requests.",
 		},
 		{
 			Name:        "on_error",
@@ -471,6 +471,16 @@ func configFieldsExact(fields []pluginConfigField) bool {
 			Name:        "limits",
 			Type:        "object",
 			Description: "Bounded JSON scanning, text, finding, and replacement budgets.",
+		},
+		{
+			Name:        "key_filter",
+			Type:        "object",
+			Description: "Inspect only (mode include) or all but (mode exclude) the listed client api_keys or caller_scopes; on_missing_identity is filter or skip. Empty lists inspect every request.",
+		},
+		{
+			Name:        "tokenize",
+			Type:        "object",
+			Description: "Options for mode tokenize: token_format, hmac_secret, max_entries, ttl, and restore_scope (caller or request).",
 		},
 		{
 			Name:        "skip_models",

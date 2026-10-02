@@ -138,7 +138,7 @@ def main() -> None:
         require(metadata.get("Author") == "ahoo (fork of rheodev)", "plugin author mismatch")
         require(metadata.get("GitHubRepository") == REPOSITORY, "plugin repository mismatch")
         config_fields = metadata.get("ConfigFields")
-        require(isinstance(config_fields, list) and len(config_fields) == 10, "config field metadata mismatch")
+        require(isinstance(config_fields, list) and len(config_fields) == 12, "config field metadata mismatch")
         capabilities = registration.get("capabilities", {})
         require(
             capabilities
