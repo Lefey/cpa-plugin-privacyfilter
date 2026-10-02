@@ -217,3 +217,25 @@ func TestReconfigureKeepsTokensAndShutdownClearsThem(t *testing.T) {
 		t.Fatal("shutdown left mappings or sessions in memory")
 	}
 }
+
+func TestLeavingTokenizeModeClearsStoredValues(t *testing.T) {
+	resetABIStateForTest(t)
+	registerWithConfigForTest(t, pluginabi.SchemaVersion, []byte("mode: tokenize\n"))
+	callABIForTest[pluginapi.RequestInterceptResponse](t, pluginabi.MethodRequestInterceptBefore, pluginapi.RequestInterceptRequest{
+		RequestID: "before-switch", SourceFormat: "openai", Model: "m",
+		Body: []byte(chatBody("mail " + testSecretEmail)), Metadata: callerMetadata(testTokenizeKeyA),
+	})
+	privacyFilterABIState.RLock()
+	tokens := privacyFilterABIState.runtime.loadedTokenRuntime()
+	privacyFilterABIState.RUnlock()
+	if tokens.vault.stats().Entries == 0 {
+		t.Fatal("fixture stored no mapping")
+	}
+	reg := registerWithConfigForTest(t, pluginabi.SchemaVersion, []byte("mode: redact\n"))
+	if reg.Capabilities.ResponseInterceptor || reg.Capabilities.StreamChunkInterceptor || reg.SchemaVersion != 2 {
+		t.Fatalf("redact registration after tokenize = %+v schema %d", reg.Capabilities, reg.SchemaVersion)
+	}
+	if tokens.vault.stats().Entries != 0 || tokens.sessions.len() != 0 {
+		t.Fatal("values stayed in memory after leaving tokenize mode")
+	}
+}

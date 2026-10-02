@@ -462,8 +462,8 @@ request scope.
 **Storage.** Mappings live only in process memory, bounded by `max_entries` and
 `ttl`. They are never written to disk or to logs. Response-side buffers and, in
 request scope, the mappings themselves are released when the Host reports the
-request complete, including client cancellation and upstream failure. Shutdown
-clears everything.
+request complete, including client cancellation and upstream failure. Shutdown,
+and a reconfigure that leaves `mode: tokenize`, clear everything.
 
 **What is restored.** Only an exact token. A token the model altered (different
 case, truncated, edited) is not guessed at. Supported response formats are
@@ -529,9 +529,10 @@ Tokens, values and API keys are never logged.
   A value with quotes or backslashes inside JSON that is itself nested in a
   string of streamed arguments is escaped one level only. Non-streaming
   responses handle any nesting up to four levels.
-- Streamed text is treated as JSON (structured output) when it starts with `{`
-  or `[`. Text in a Markdown code fence is restored verbatim, so a value with
-  quotes can make JSON inside the fence invalid.
+- Streamed text is treated as JSON (structured output) while it starts with `{`
+  or `[` and keeps following JSON syntax; prose that merely begins with a
+  bracket is restored verbatim. Text in a Markdown code fence is also restored
+  verbatim, so a value with quotes can make JSON inside the fence invalid.
 - The extra delta that delivers a withheld tail before a Responses `*.done`
   event reuses the previous delta's `sequence_number`.
 - Gemini streaming with an explicit non-SSE `alt` transport (JSON-array

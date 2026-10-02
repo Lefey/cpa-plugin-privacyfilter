@@ -347,3 +347,31 @@ func TestBuildPluginCompilesKeyFilter(t *testing.T) {
 		t.Fatal("buildPlugin accepted duplicate key_filter keys")
 	}
 }
+
+func TestConfigDecodeErrorsNeverEchoValues(t *testing.T) {
+	const secretKey = "sk-live-1234567890abcdef"
+	for _, raw := range []string{
+		"key_filter:\n  api_keys: " + secretKey + "\n",
+		"key_filter:\n  api_keys: sk-short\n",
+		"key_filter:\n  " + secretKey + ": x\n",
+		"key_filter:\n  caller_scopes: " + secretKey + "\n",
+		"tokenize:\n  hmac_secret: [" + secretKey + "]\n",
+		"tokenize:\n  ttl: " + secretKey + "\n",
+		"tokenize:\n  max_entries: " + secretKey + "\n",
+		secretKey + ": true\n",
+	} {
+		_, err := parseConfig([]byte(raw))
+		if err == nil {
+			t.Fatal("malformed config was accepted")
+		}
+		message := err.Error()
+		for _, leak := range []string{secretKey, "sk-live", "sk-short", "1234567890"} {
+			if strings.Contains(message, leak) {
+				t.Fatalf("decode error echoed part of a configured value: %q", leak)
+			}
+		}
+		if !strings.Contains(message, "line ") {
+			t.Fatalf("decode error lost its position: %s", message)
+		}
+	}
+}

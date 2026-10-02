@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -155,19 +156,48 @@ func parseConfig(raw []byte) (privacyFilterConfig, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
-		return cfg, fmt.Errorf("invalid privacyfilter config: %w", err)
+		return cfg, fmt.Errorf("invalid privacyfilter config: %w", redactYAMLError(err))
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return cfg, fmt.Errorf("invalid privacyfilter config: multiple YAML documents are not allowed")
 		}
-		return cfg, fmt.Errorf("invalid privacyfilter config: %w", err)
+		return cfg, fmt.Errorf("invalid privacyfilter config: %w", redactYAMLError(err))
 	}
 	if err := cfg.validate(); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+// redactYAMLError keeps where a decode error happened and what kind it was, and
+// drops the scalar, field name, or mapping key that yaml.v3 quotes in its
+// message. Under key_filter and tokenize that text can be a client API key or
+// the HMAC secret, and a registration error is logged by the Host.
+func redactYAMLError(err error) error {
+	var typeError *yaml.TypeError
+	if !errors.As(err, &typeError) {
+		return err
+	}
+	problems := make([]string, 0, len(typeError.Errors))
+	for _, entry := range typeError.Errors {
+		position := "unknown line"
+		if colon := strings.IndexByte(entry, ':'); colon > 0 && strings.HasPrefix(entry, "line ") {
+			position = entry[:colon]
+		}
+		reason := "invalid value"
+		switch {
+		case strings.Contains(entry, "not found in type"):
+			reason = "unknown field"
+		case strings.Contains(entry, "already defined"):
+			reason = "duplicate key"
+		case strings.Contains(entry, "cannot unmarshal"):
+			reason = "value has the wrong type"
+		}
+		problems = append(problems, position+": "+reason)
+	}
+	return errors.New("yaml: " + strings.Join(problems, "; "))
 }
 
 func (cfg privacyFilterConfig) validate() error {

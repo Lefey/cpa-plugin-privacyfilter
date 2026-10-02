@@ -281,7 +281,7 @@ tokenize:
 
 **还原是隔离的。** 映射按调用方（或按请求）分区保存，响应只查询自己的分区。如果有人把其他调用方的 token 写进 prompt 并让模型原样重复，该 token 会原样返回，并计入 `unresolved`。使用 `restore_scope: caller` 时，共用同一 API key 的所有客户端属于同一信任域：在一次对话中签发的 token 可以在同一 key 的另一次对话中被还原。这正是服务端历史（例如 Responses 的 `previous_response_id`）能够工作的原因。`restore_scope: request` 取消这一点：响应只还原为本请求签发的 token，请求结束时映射即被销毁。没有经过认证的调用方身份的请求始终使用 request 范围。
 
-**存储。** 映射只存在于进程内存中，受 `max_entries` 和 `ttl` 约束，不会写入磁盘或日志。宿主报告请求完成时（包括客户端取消和上游失败），响应侧缓冲区会被释放；request 范围下映射本身也会被释放。Shutdown 会清空全部内容。
+**存储。** 映射只存在于进程内存中，受 `max_entries` 和 `ttl` 约束，不会写入磁盘或日志。宿主报告请求完成时（包括客户端取消和上游失败），响应侧缓冲区会被释放；request 范围下映射本身也会被释放。Shutdown 以及离开 `mode: tokenize` 的 reconfigure 都会清空全部内容。
 
 **还原哪些内容。** 只还原完全匹配的 token。被模型改动过的 token（大小写不同、被截断、被编辑）不会被猜测。支持的响应格式为 `openai`、`openai-response`、`claude`、`gemini` 和 `interactions`：
 
@@ -300,7 +300,7 @@ tokenize:
 - 改写响应时出错，会使该响应或该流的剩余部分保留 token 而不是原始值。不会泄露任何内容，但客户端会看到 token。日志中会带 `restore_failed`。
 - **Interceptor 顺序。** 宿主按相同的 priority 顺序执行 request 和 response interceptor，并且不会告诉插件有哪些相邻插件。在本插件之前执行的 request interceptor 能看到原始值；在本插件之后执行的 response 或 stream interceptor 能看到还原后的值。要让其他插件在请求侧接触不到明文，本插件必须最先执行，而这也使它在响应侧最先还原；没有任何 priority 能同时满足两者。请把它作为唯一改写 body 的 interceptor 运行，或接受上述两种暴露之一。更早执行并丢弃或重新分帧 chunk 的 response interceptor 也可能使还原失效。该模式下每次注册都会记录一条带有自身 priority 的警告。
 - 流式 tool arguments 按 token 所在的字符串字面量转义。如果流式 arguments 的某个字符串中又嵌套了 JSON，其中含引号或反斜杠的值只转义一层。非流式响应可处理最多四层嵌套。
-- 流式文本以 `{` 或 `[` 开头时被视为 JSON（structured output）。Markdown 代码块中的文本按原样还原，因此带引号的值可能使代码块内的 JSON 不合法。
+- 流式文本以 `{` 或 `[` 开头并且后续内容持续符合 JSON 语法时，被视为 JSON（structured output）；仅仅以括号开头的普通文本按原样还原。Markdown 代码块中的文本同样按原样还原，因此带引号的值可能使代码块内的 JSON 不合法。
 - 在 Responses `*.done` 事件之前发出暂扣尾部的额外 delta 会复用上一个 delta 的 `sequence_number`。
 - 显式使用非 SSE `alt` 传输（JSON 数组片段）的 Gemini 流不会被解析；token 保持原样并被上报。
 - 如果同一调用方两个不同值的默认 48 位哈希发生碰撞，第二个值会被不可逆脱敏，而不是 token 化。

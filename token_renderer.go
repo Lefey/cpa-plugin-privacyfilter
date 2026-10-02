@@ -91,6 +91,20 @@ func newTokenizer(cfg tokenizeConfig, runtime *tokenRuntime) (*tokenizer, error)
 	}, nil
 }
 
+// sessionFor returns the restore session of a response. The RequestID alone
+// identifies it; the caller check is defence in depth, so that a response
+// carrying another caller's identity is never restored from this session.
+func (t *tokenizer) sessionFor(requestID string, metadata map[string]any) *restoreSession {
+	session := t.sessions.get(requestID)
+	if session == nil {
+		return nil
+	}
+	if caller := callerScopeFromMetadata(metadata); caller != "" && session.caller != "" && caller != session.caller {
+		return nil
+	}
+	return session
+}
+
 // partitionFor selects the vault partition a request issues into and restores
 // from. A caller partition needs an authenticated caller; without one the
 // request falls back to its own partition, which is the narrower scope.
@@ -228,7 +242,7 @@ func (r *tokenRenderer) commit() int {
 	// A caller partition can hold tokens from earlier turns that this response
 	// may legitimately reference, so the session opens whenever it is non-empty.
 	if r.tokenizer.vault.has(r.partition) {
-		r.tokenizer.sessions.open(r.requestID, r.partition, r.requestScoped)
+		r.tokenizer.sessions.open(r.requestID, r.partition, r.namespace, r.requestScoped)
 	}
 	return published
 }

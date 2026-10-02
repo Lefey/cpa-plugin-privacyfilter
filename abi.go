@@ -439,6 +439,11 @@ func handlePrivacyFilterRegister(request []byte) ([]byte, error) {
 	privacyFilterABIState.plugin = p
 	privacyFilterABIState.shuttingDown = false
 	privacyFilterABIState.Unlock()
+	if p.tok == nil {
+		// Leaving tokenize mode: the Host stops calling the response hooks, so
+		// nothing can be restored anymore and the stored values must not linger.
+		runtime.loadedTokenRuntime().clear()
+	}
 	log.WithFields(log.Fields{
 		"version":  pluginVersion,
 		"revision": pluginRevision,

@@ -647,12 +647,12 @@ func TestStreamSessionEvictionAndExpiry(t *testing.T) {
 	})
 	for _, id := range []string{"a", "b"} {
 		vault.put(requestPartitionPrefix+id, "tok", "v")
-		registry.open(id, requestPartitionPrefix+id, true)
+		registry.open(id, requestPartitionPrefix+id, "", true)
 		clock.Advance(time.Second)
 	}
 	// A third request evicts the least recently active one and its mappings.
 	vault.put(requestPartitionPrefix+"c", "tok", "v")
-	registry.open("c", requestPartitionPrefix+"c", true)
+	registry.open("c", requestPartitionPrefix+"c", "", true)
 	if registry.get("a") != nil || vault.has(requestPartitionPrefix+"a") {
 		t.Fatal("evicted session or its mappings survived")
 	}
@@ -667,7 +667,7 @@ func TestStreamSessionEvictionAndExpiry(t *testing.T) {
 	if registry.close("b") != nil || registry.close("missing") != nil {
 		t.Fatal("close returned a session that was already gone")
 	}
-	registry.open("d", requestPartitionPrefix+"d", true)
+	registry.open("d", requestPartitionPrefix+"d", "", true)
 	if registry.len() != 1 {
 		t.Fatalf("expired sessions were retained: %d", registry.len())
 	}
@@ -716,5 +716,79 @@ func TestStreamCarryIsBounded(t *testing.T) {
 	}
 	if delivered == 0 {
 		t.Fatal("event lines without data were withheld forever")
+	}
+}
+
+func TestStreamProseThatLooksLikeJSONIsRestoredVerbatim(t *testing.T) {
+	c := newStreamCase(t, "req-prose")
+	for _, opening := range []string{"[Note] He said \"", "{braces} then \"", "[1] see \"", "[\"a\"] and then: \""} {
+		text := opening + c.token + "\" ok"
+		for _, format := range []string{"openai", "claude", "openai-response", "interactions"} {
+			delivered := runStream(t, c.plugin, c.requestID, format, providerStream(format, splitEvery(text, 5), []string{"{}"}))
+			got, _ := clientView(t, format, delivered)
+			if got != opening+awkwardSecret+"\" ok" {
+				t.Fatalf("%s: prose opening %q was escaped as if it were JSON", format, opening)
+			}
+		}
+	}
+}
+
+func TestStreamDataLineWithUnusualWhitespace(t *testing.T) {
+	c := newStreamCase(t, "req-space")
+	body := "event: content_block_delta\ndata:\v {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"" + c.token + " \"}} \t\n\n"
+	delivered := runStream(t, c.plugin, c.requestID, "claude", [][]byte{[]byte(body)})
+	if text, _ := clientView(t, "claude", delivered); text != awkwardSecret+" " {
+		t.Fatal("event with unusual whitespace around the payload was not rewritten cleanly")
+	}
+}
+
+func TestSessionExpiredBetweenPassesKeepsItsMappings(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	vault := newTokenVault(100, time.Hour, clock.Now)
+	registry := newRestoreRegistry(8, time.Minute, clock.Now, func(session *restoreSession) {
+		if session.requestScoped {
+			vault.dropPartition(session.partition)
+		}
+	})
+	partition := requestPartitionPrefix + "slow"
+	vault.put(partition, "tok", "v")
+	registry.open("slow", partition, "", true)
+	// The request waits longer than the session TTL for a credential, then the
+	// after-auth pass publishes again and reopens the session.
+	clock.Advance(2 * time.Minute)
+	vault.put(partition, "tok", "v")
+	if registry.open("slow", partition, "", true) == nil {
+		t.Fatal("session was not reopened")
+	}
+	if _, ok := vault.get(partition, "tok"); !ok {
+		t.Fatal("reopening an expired session destroyed the request's own mappings")
+	}
+}
+
+func TestResponseFromAnotherCallerIsNotServedByTheSession(t *testing.T) {
+	p := newTokenizePlugin(t, "")
+	upstream := sendRequest(t, p, "shared-id", testTokenizeKeyA, "openai", chatBody("mail "+testSecretEmail))
+	token := testTokenPattern.FindString(string(upstream))
+	body := []byte(`{"choices":[{"message":{"content":"` + token + `"}}]}`)
+	// The Host never reuses a RequestID across callers; if it ever did, the
+	// response of the other caller must not be restored from this session.
+	resp, err := p.InterceptResponse(context.Background(), pluginapi.ResponseInterceptRequest{
+		RequestID: "shared-id", SourceFormat: "openai", Body: body, Metadata: callerMetadata(testTokenizeKeyB),
+	})
+	if err != nil || resp.Body != nil {
+		t.Fatal("a response naming another caller was restored")
+	}
+	chunk, err := p.InterceptStreamChunk(context.Background(), pluginapi.StreamChunkInterceptRequest{
+		RequestID: "shared-id", SourceFormat: "openai", ChunkIndex: 0, Metadata: callerMetadata(testTokenizeKeyB),
+		Body: []byte(`{"choices":[{"index":0,"delta":{"content":"` + token + `"},"finish_reason":"stop"}]}`),
+	})
+	if err != nil || chunk.Body != nil {
+		t.Fatal("a stream naming another caller was restored")
+	}
+	resp, err = p.InterceptResponse(context.Background(), pluginapi.ResponseInterceptRequest{
+		RequestID: "shared-id", SourceFormat: "openai", Body: body, Metadata: callerMetadata(testTokenizeKeyA),
+	})
+	if err != nil || !strings.Contains(string(resp.Body), testSecretEmail) {
+		t.Fatal("the owning caller's response was not restored")
 	}
 }

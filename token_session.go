@@ -30,6 +30,9 @@ type restoreCounters struct {
 type restoreSession struct {
 	requestID string
 	partition string
+	// caller is the caller identity the request was tokenized under. A response
+	// that names a different caller is not served by this session.
+	caller string
 	// requestScoped means the partition belongs to this request alone and is
 	// destroyed with the session.
 	requestScoped bool
@@ -85,7 +88,7 @@ func (r *restoreRegistry) configure(ttl time.Duration) {
 
 // open returns the session for requestID, creating it when needed. A request
 // keeps one session across the before-auth and after-auth passes.
-func (r *restoreRegistry) open(requestID, partition string, requestScoped bool) *restoreSession {
+func (r *restoreRegistry) open(requestID, partition, caller string, requestScoped bool) *restoreSession {
 	if r == nil || requestID == "" || partition == "" {
 		return nil
 	}
@@ -106,6 +109,7 @@ func (r *restoreRegistry) open(requestID, partition string, requestScoped bool) 
 		session = &restoreSession{
 			requestID:     requestID,
 			partition:     partition,
+			caller:        caller,
 			requestScoped: requestScoped,
 			lastAccess:    now,
 		}
@@ -123,7 +127,16 @@ func (r *restoreRegistry) open(requestID, partition string, requestScoped bool) 
 		}
 	}
 	r.mu.Unlock()
-	r.releaseAll(released)
+	// A session that expired between the two interceptor passes of this very
+	// request shares the partition of its replacement. Releasing it would
+	// destroy the mappings the request just published.
+	kept := released[:0]
+	for _, old := range released {
+		if old.partition != partition {
+			kept = append(kept, old)
+		}
+	}
+	r.releaseAll(kept)
 	return session
 }
 

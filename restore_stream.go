@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/ahoo/cpa-plugin-privacyfilter/payload"
 	"github.com/ahoo/cpa-plugin-privacyfilter/walker"
@@ -29,11 +30,20 @@ type streamChannel struct {
 	held string
 
 	// jsonMode means the streamed string is itself JSON text, so a value that
-	// lands inside one of its string literals must be escaped for it.
+	// lands inside one of its string literals must be escaped for it. Tool-call
+	// arguments always are. A text block is assumed to be JSON (structured
+	// output) while it starts with { or [ and keeps looking like JSON; sniffed
+	// marks that revocable assumption.
 	jsonMode bool
+	sniffed  bool
 	decided  bool
 	inString bool
 	escaped  bool
+	// depth, literal and previous let a sniffed channel notice that its text is
+	// not JSON after all.
+	depth    int
+	literal  string
+	previous byte
 
 	// kind, group, slot and template let a protocol synthesise the delta that
 	// delivers a withheld tail before the block's terminal event.
@@ -89,7 +99,9 @@ func (c *streamChannel) observe(b byte) {
 			return
 		}
 		c.decided = true
-		c.jsonMode = c.jsonMode || b == '{' || b == '['
+		if !c.jsonMode && (b == '{' || b == '[') {
+			c.jsonMode, c.sniffed = true, true
+		}
 	}
 	if !c.jsonMode {
 		return
@@ -101,7 +113,50 @@ func (c *streamChannel) observe(b byte) {
 		c.escaped = true
 	case b == '"':
 		c.inString = !c.inString
+	case !c.inString && c.sniffed && !c.plausibleJSON(b):
+		// Prose such as "[Note] ..." only looked like JSON. From here on it is
+		// plain text and values are restored verbatim.
+		c.jsonMode, c.inString = false, false
 	}
+	c.previous = b
+}
+
+// plausibleJSON checks one byte outside a string literal against JSON grammar
+// closely enough to tell structured output from prose: brackets must nest and
+// nothing may follow the closed top-level value, letters must spell true,
+// false or null, and an exponent must follow a digit.
+func (c *streamChannel) plausibleJSON(b byte) bool {
+	if c.literal != "" {
+		if b != c.literal[0] {
+			return false
+		}
+		c.literal = c.literal[1:]
+		return true
+	}
+	if b == ' ' || b == '\t' || b == '\r' || b == '\n' {
+		return true
+	}
+	if c.depth == 0 && b != '{' && b != '[' {
+		return false
+	}
+	switch b {
+	case '{', '[':
+		c.depth++
+	case '}', ']':
+		c.depth--
+	case 't':
+		c.literal = "rue"
+	case 'f':
+		c.literal = "alse"
+	case 'n':
+		c.literal = "ull"
+	case 'e', 'E':
+		return c.previous >= '0' && c.previous <= '9'
+	case ',', ':', '-', '+', '.':
+	default:
+		return b >= '0' && b <= '9'
+	}
+	return true
 }
 
 // observeToken accounts for a token. Its bytes are [a-z0-9-], which cannot
@@ -109,6 +164,10 @@ func (c *streamChannel) observe(b byte) {
 func (c *streamChannel) observeToken() {
 	c.decided = true
 	c.escaped = false
+	if c.jsonMode && c.sniffed && !c.inString {
+		// A bare token is not JSON either.
+		c.jsonMode = false
+	}
 }
 
 // streamState is the response-side reassembly state of one stream.
@@ -276,7 +335,7 @@ func (sp *streamProcessor) chunk(body []byte) (out []byte, drop bool) {
 				buffer.WriteString("data: ")
 			}
 		}
-		start := len(content) - len(after) + (len(after) - len(bytes.TrimLeft(after, " \t")))
+		start := len(content) - len(bytes.TrimLeftFunc(after, unicode.IsSpace))
 		end := start + len(eventPayload)
 		buffer.Write(content[:start])
 		buffer.Write(rewritten)

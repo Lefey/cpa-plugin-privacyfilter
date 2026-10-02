@@ -34,7 +34,7 @@ func (p *privacyFilterPlugin) InterceptResponse(ctx context.Context, req plugina
 	if p == nil || p.tok == nil || len(req.Body) == 0 {
 		return pluginapi.ResponseInterceptResponse{}, nil
 	}
-	session := p.tok.sessions.get(req.RequestID)
+	session := p.tok.sessionFor(req.RequestID, req.Metadata)
 	if session == nil || !p.tok.codec.containsBytes(req.Body) {
 		return pluginapi.ResponseInterceptResponse{}, nil
 	}
@@ -63,7 +63,7 @@ func (p *privacyFilterPlugin) InterceptStreamChunk(ctx context.Context, req plug
 	if p == nil || p.tok == nil {
 		return pluginapi.StreamChunkInterceptResponse{}, nil
 	}
-	session := p.tok.sessions.get(req.RequestID)
+	session := p.tok.sessionFor(req.RequestID, req.Metadata)
 	if session == nil {
 		return pluginapi.StreamChunkInterceptResponse{}, nil
 	}
