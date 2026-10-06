@@ -300,3 +300,13 @@ func TestRedactModeRegistrationAndBehaviorUnchanged(t *testing.T) {
 		t.Fatal("redact mode rewrote a stream chunk")
 	}
 }
+
+func TestTokenizeKindsForPhoneAndIBAN(t *testing.T) {
+	p := newTokenizePlugin(t, "")
+	out := sendRequest(t, p, "kinds", testTokenizeKeyA, "openai", chatBody("почта test@example.net, телефон +79149996666, IBAN GB82 WEST 1234 5698 7654 32, карта 4111 1111 1111 1111"))
+	got := at(t, decodeJSON(t, string(out)), "messages", 0, "content").(string)
+	want := regexp.MustCompile(`^почта pf-email-[0-9a-f]{12}, телефон pf-phone-[0-9a-f]{12}, IBAN pf-iban-[0-9a-f]{12}, карта pf-bankcard-[0-9a-f]{12}$`)
+	if !want.MatchString(got) {
+		t.Fatalf("tokenized text = %q", got)
+	}
+}

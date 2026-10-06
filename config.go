@@ -81,6 +81,9 @@ type privacyFilterConfig struct {
 	BlockRuleIDs          []string          `yaml:"block_rule_ids"`
 	Replacements          map[string]string `yaml:"replacements"`
 	Limits                limitsConfig      `yaml:"limits"`
+	// PhoneRegions enables national phone number formats for the listed ISO
+	// 3166-1 alpha-2 regions. International "+" numbers need no region.
+	PhoneRegions []string `yaml:"phone_regions"`
 	// Tokenize configures mode: tokenize. It is ignored by the other modes.
 	Tokenize tokenizeConfig `yaml:"tokenize"`
 	// KeyFilter restricts inspection to (or away from) listed downstream API
@@ -230,7 +233,7 @@ func (cfg privacyFilterConfig) validate() error {
 		return fmt.Errorf("invalid privacyfilter config: configured detector limit exceeds hard maximum")
 	}
 	for kind := range cfg.Replacements {
-		if _, ok := replacementKind(kind); !ok {
+		if _, ok := replacementKind(kind); !ok && !retiredReplacementKind(kind) {
 			return fmt.Errorf("invalid privacyfilter config: unknown replacement kind %q", kind)
 		}
 	}
@@ -282,6 +285,9 @@ func (cfg privacyFilterConfig) engineLimits() privacyengine.Limits {
 func (cfg privacyFilterConfig) renderer() (privacyengine.Renderer, error) {
 	overrides := make(map[privacyengine.Kind]string, len(cfg.Replacements))
 	for name, replacement := range cfg.Replacements {
+		if retiredReplacementKind(name) {
+			continue
+		}
 		kind, ok := replacementKind(name)
 		if !ok {
 			return nil, fmt.Errorf("unknown replacement kind %q", name)
@@ -307,16 +313,23 @@ func validateReplacementSafety(engine *privacyengine.Engine, replacements map[st
 	return nil
 }
 
+// retiredReplacementKind reports a kind that no detector produces any more.
+// It stays accepted so that an existing configuration still loads; a plugin
+// that fails to register does not filter at all.
+func retiredReplacementKind(name string) bool {
+	return strings.ToLower(strings.TrimSpace(name)) == "id_card"
+}
+
 func replacementKind(name string) (privacyengine.Kind, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case string(privacyengine.KindEmail):
 		return privacyengine.KindEmail, true
 	case string(privacyengine.KindPhone):
 		return privacyengine.KindPhone, true
-	case string(privacyengine.KindIDCard):
-		return privacyengine.KindIDCard, true
 	case string(privacyengine.KindBankCard):
 		return privacyengine.KindBankCard, true
+	case string(privacyengine.KindIBAN):
+		return privacyengine.KindIBAN, true
 	case string(privacyengine.KindIP):
 		return privacyengine.KindIP, true
 	case string(privacyengine.KindSecret):
@@ -438,6 +451,7 @@ func newEngine(pluginDir string, cfg privacyFilterConfig) (*privacyengine.Engine
 		EmbeddedCompatibility: privacyengine.CompatibilitySkipUnsupported,
 		CustomCompatibility:   material.customCompatibility,
 		DefaultLimits:         cfg.engineLimits(),
+		PhoneRegions:          cfg.PhoneRegions,
 	}
 	engine, report, err := privacyengine.New(engineConfig)
 	if err != nil {

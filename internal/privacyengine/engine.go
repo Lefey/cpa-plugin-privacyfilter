@@ -18,6 +18,10 @@ type Config struct {
 	EmbeddedCompatibility CompatibilityPolicy
 	CustomCompatibility   CompatibilityPolicy
 	DefaultLimits         Limits
+	// PhoneRegions lists the ISO 3166-1 alpha-2 regions whose national phone
+	// number formats are recognised. Numbers in international format are
+	// recognised for every country without it.
+	PhoneRegions []string
 }
 
 // Engine is immutable after construction and safe for concurrent use.
@@ -25,6 +29,7 @@ type Engine struct {
 	rules            []secretRule
 	globalAllowlists []compiledAllowlist
 	limits           Limits
+	phoneRegions     []phoneRegion
 	report           CompatibilityReport
 }
 
@@ -32,6 +37,10 @@ type Engine struct {
 func New(config Config) (*Engine, CompatibilityReport, error) {
 	var report CompatibilityReport
 	limits, err := normalizeLimits(config.DefaultLimits)
+	if err != nil {
+		return nil, report, err
+	}
+	phoneRegions, err := normalizePhoneRegions(config.PhoneRegions)
 	if err != nil {
 		return nil, report, err
 	}
@@ -112,6 +121,7 @@ func New(config Config) (*Engine, CompatibilityReport, error) {
 		rules:            rules,
 		globalAllowlists: globalAllowlists,
 		limits:           limits,
+		phoneRegions:     phoneRegions,
 		report:           cloneReport(report),
 	}
 	return engine, cloneReport(report), nil
@@ -191,7 +201,7 @@ func (e *Engine) detect(ctx context.Context, text string, options RequestOptions
 			return nil, err
 		}
 	}
-	if err := detectPII(ctx, text, collector); err != nil {
+	if err := detectPII(ctx, text, e.phoneRegions, collector); err != nil {
 		return nil, err
 	}
 	if err := e.detectSecrets(ctx, text, collector); err != nil {

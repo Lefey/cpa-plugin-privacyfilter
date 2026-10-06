@@ -8,8 +8,8 @@ import (
 var defaultPlaceholders = map[Kind]string{
 	KindEmail:    "[邮箱]",
 	KindPhone:    "[电话]",
-	KindIDCard:   "[身份证]",
 	KindBankCard: "[银行卡]",
+	KindIBAN:     "[IBAN]",
 	KindIP:       "[IP]",
 	KindSecret:   "[密钥]",
 }

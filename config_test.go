@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ahoo/cpa-plugin-privacyfilter/internal/privacyengine"
@@ -61,6 +62,7 @@ func TestParseConfigValidatesModesRulesReplacementsAndLimits(t *testing.T) {
 		"gitleaks_mode: extend\n",
 		"gitleaks_toml: x\ngitleaks_mode: merge\n",
 		"replacements:\n  unknown: x\n",
+		"phone_regions: RU\n",
 		"block_rule_ids: ['', x]\n",
 		"block_rule_ids: [x, x]\n",
 		"limits:\n  max_text_bytes: 0\n",
@@ -236,5 +238,28 @@ keywords = ["ONLY_"]
 	}
 	if len(findings) != 0 {
 		t.Fatalf("embedded rule unexpectedly active in replace mode: %+v", findings)
+	}
+}
+
+func TestPhoneRegionsAndRetiredReplacementKind(t *testing.T) {
+	for _, raw := range []string{"phone_regions: [XX]\n", "phone_regions: [RU, ru]\n", "phone_regions: ['']\n"} {
+		if _, err := buildPlugin([]byte(raw), t.TempDir()); err == nil {
+			t.Errorf("buildPlugin accepted %q", raw)
+		}
+	}
+	// id_card has no detector any more; a configuration that still names it
+	// must keep loading, because a plugin that fails to register filters nothing.
+	plugin, err := buildPlugin([]byte("phone_regions: [ru]\nreplacements:\n  id_card: '[ID]'\n  iban: '[ACCOUNT]'\n  phone: '[PHONE]'\n"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := plugin.Capabilities.RequestInterceptor.(*privacyFilterPlugin)
+	body := `{"model":"m","messages":[{"role":"user","content":"тел 8 (914) 999-66-66, счёт DE89 3704 0044 0532 0130 00"}]}`
+	modified, findings, err := redactForTest(t, p, "openai", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings != 2 || !strings.Contains(string(modified), "тел [PHONE], счёт [ACCOUNT]") {
+		t.Fatalf("findings=%d body=%s", findings, modified)
 	}
 }

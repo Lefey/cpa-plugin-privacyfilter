@@ -87,8 +87,8 @@ var tokenKindNames = []struct {
 }{
 	{privacyengine.KindEmail, "email"},
 	{privacyengine.KindPhone, "phone"},
-	{privacyengine.KindIDCard, "idcard"},
 	{privacyengine.KindBankCard, "bankcard"},
+	{privacyengine.KindIBAN, "iban"},
 	{privacyengine.KindIP, "ip"},
 	{privacyengine.KindSecret, "secret"},
 }

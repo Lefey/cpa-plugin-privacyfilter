@@ -390,7 +390,7 @@ id = "never"
 regex = '''NEVER_MATCH_THIS_VALUE'''
 keywords = ["NEVER_MATCH"]
 `)
-	input := "前alice@example.com后 13812345678 192.168.1.1 卡4111111111111111"
+	input := "前alice@example.com后 +79149996666 192.168.1.1 卡4111111111111111"
 	findings, err := engine.Detect(context.Background(), input, RequestOptions{})
 	if err != nil {
 		t.Fatal(err)

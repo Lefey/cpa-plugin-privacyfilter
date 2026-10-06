@@ -12,21 +12,23 @@ type Kind string
 const (
 	KindEmail    Kind = "email"
 	KindPhone    Kind = "phone"
-	KindIDCard   Kind = "id_card"
 	KindBankCard Kind = "bank_card"
+	KindIBAN     Kind = "iban"
 	KindIP       Kind = "ip"
 	KindSecret   Kind = "secret"
 )
 
 const (
-	rulePIIEmail        = "pii.email"
-	rulePIIPhoneCN      = "pii.phone-cn"
-	rulePIIIDCardCN     = "pii.id-card-cn"
-	rulePIIBankCard     = "pii.bank-card"
-	rulePIIIPv4         = "pii.ipv4"
-	ruleContextSecret   = "builtin.context-secret"
-	ruleHighEntropy     = "builtin.high-entropy"
-	ruleCredentialField = "builtin.credential-field"
+	rulePIIEmail         = "pii.email"
+	rulePIIPhone         = "pii.phone"
+	rulePIIBankCard      = "pii.bank-card"
+	rulePIIIPv4          = "pii.ipv4"
+	rulePIIIPv6          = "pii.ipv6"
+	rulePIIIBAN          = "pii.iban"
+	rulePIIURLCredential = "pii.url-credential"
+	ruleContextSecret    = "builtin.context-secret"
+	ruleHighEntropy      = "builtin.high-entropy"
+	ruleCredentialField  = "builtin.credential-field"
 )
 
 // Finding describes a sensitive byte span. Start is inclusive and End is

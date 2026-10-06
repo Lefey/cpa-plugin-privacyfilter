@@ -1,0 +1,23 @@
+# Additional rules for cpa-plugin-privacyfilter (gitleaks_mode: extend).
+# Append them to the rules file that gitleaks_toml points to.
+#
+# They hide a person's name in two cases: a Russian full name that contains a
+# patronymic ("Иван Васильевич Приватников", "Приватникову Ивану Васильевичу"),
+# and a name stated after ФИО, "меня зовут", "моё имя", "my name is" or "full
+# name". A name written without either ("спроси у Петра Сидорова") is not
+# covered: no rule can know that a word is a person's name.
+#
+# Each regex must stay on one line; a line break after "regex =" makes the
+# whole file invalid and the plugin then does not register.
+
+[[rules]]
+id = "ru-full-name"
+description = "Russian full name recognised by its patronymic"
+regex = '''((?:[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+)?[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+(?:вич(?:а|у|ем|е)?|ьич(?:а|у|ом|е)?|(?:вн|ичн)(?:а|ы|е|у|ой))(?:\s+[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?)?)(?:[^а-яёА-ЯЁ-]|$)'''
+secretGroup = 1
+
+[[rules]]
+id = "name-after-marker"
+description = "Name stated after ФИО / меня зовут / my name is"
+regex = '''(?i:фио|меня\s+зовут|мо[её]\s+имя|my\s+name\s+is|full\s+name)[\s:—–-]+((?:[А-ЯЁ][а-яё]+|[A-Z][a-z]+)(?:-(?:[А-ЯЁ][а-яё]+|[A-Z][a-z]+))?(?:[ \t]+(?:[А-ЯЁ][а-яё]+|[A-Z][a-z]+)(?:-(?:[А-ЯЁ][а-яё]+|[A-Z][a-z]+))?){0,2})'''
+secretGroup = 1

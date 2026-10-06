@@ -83,12 +83,12 @@ func TestRedactRequestBody_NoPII(t *testing.T) {
 
 func TestRedactRequestBody_MultiPartContent(t *testing.T) {
 	p := newTestPlugin(t)
-	body := `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"my phone is 13800138000"}]}]}`
+	body := `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"my phone is +44 20 7946 0958"}]}]}`
 	modified, findings, err := redactForTest(t, p, "openai", body)
 	if err != nil {
 		t.Fatalf("redactRequestBody() error = %v", err)
 	}
-	if findings != 1 || modified == nil || strings.Contains(string(modified), "13800138000") {
+	if findings != 1 || modified == nil || strings.Contains(string(modified), "7946") {
 		t.Fatalf("phone was not safely redacted: findings=%d body_len=%d", findings, len(modified))
 	}
 }

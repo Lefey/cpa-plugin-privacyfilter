@@ -106,8 +106,8 @@ func TestRegistrationListsNewConfigFields(t *testing.T) {
 	for _, field := range reg.Metadata.ConfigFields {
 		fields[field.Name] = field
 	}
-	if len(fields) != 12 {
-		t.Fatalf("config fields = %d, want 12", len(fields))
+	if len(fields) != 13 {
+		t.Fatalf("config fields = %d, want 13", len(fields))
 	}
 	if fields["key_filter"].Type != pluginapi.ConfigFieldTypeObject || fields["tokenize"].Type != pluginapi.ConfigFieldTypeObject {
 		t.Fatal("key_filter and tokenize must be object fields")

@@ -118,10 +118,20 @@ unchanged.
 
 The engine combines:
 
-- email addresses;
-- mainland China phone and ID-card numbers;
-- Luhn-valid bank-card numbers;
-- IPv4 addresses;
+- email addresses, including ones written in Cyrillic or Greek letters or with
+  accented Latin letters;
+- phone numbers of every country in international format (`+` and a country
+  code), validated with the libphonenumber metadata, and numbers in national
+  format for the regions listed in [`phone_regions`](#phone-numbers);
+- Luhn-valid bank-card numbers of 13 to 19 digits starting with a payment
+  network digit (2 to 6), written without separators or in a usual card
+  layout (`4111 1111 1111 1111`, `4111-1111-1111-1111`, `3782 822463 10005`);
+- IBANs with a valid country length and checksum;
+- IPv4 and IPv6 addresses;
+- the password of a URL written as `scheme://user:password@host` (database
+  DSNs, Git remotes, message queues); only the password is replaced, so the
+  rest of the URL stays readable, and documentation stand-ins such as
+  `${DB_PASSWORD}`, `<password>` or `REPLACE_ME` are left alone;
 - contextual and high-entropy secret detection;
 - exact structured credential-field detection; and
 - the request-text-compatible regex, keyword, entropy, capture-group, and
@@ -133,10 +143,40 @@ Default placeholders are:
 |---|---|---|
 | `email` | `[邮箱]` | `[邮箱#2]` |
 | `phone` | `[电话]` | `[电话#2]` |
-| `id_card` | `[身份证]` | `[身份证#2]` |
 | `bank_card` | `[银行卡]` | `[银行卡#2]` |
+| `iban` | `[IBAN]` | `[IBAN#2]` |
 | `ip` | `[IP]` | `[IP#2]` |
 | `secret` | `[密钥]` | `[密钥#2]` |
+
+### Phone numbers
+
+A number that starts with `+` and a country code is recognised for every
+country without configuration: `+79149996666`, `+7 (914) 999-66-66`,
+`+44 20 7946 0958`. It must be a valid number of that country, not merely the
+right count of digits.
+
+A number in national format is ambiguous: `89149996666` is a mobile number in
+Russia and an ordinary number elsewhere. It is recognised only for the regions
+listed in `phone_regions`, given as ISO 3166-1 alpha-2 codes:
+
+```yaml
+phone_regions: [RU, KZ]
+```
+
+With `RU`, `8 (914) 999-66-66`, `89149996666` and `914-999-66-66` are found.
+Each region widens what counts as a phone number, so an order number or an
+identifier with the same digits is replaced as well; list only the regions your
+traffic uses. Each region also adds work on text that consists mostly of
+space-separated numbers. Digits that continue a date, a version or a decimal
+fraction are not candidates.
+
+Earlier versions recognised bare mainland China mobile numbers and 18-character
+resident ID numbers with built-in rules. Both are gone, together with the
+`id_card` kind and the rule IDs `pii.phone-cn` and `pii.id-card-cn`: set
+`phone_regions: [CN]` for the mobile numbers, and add a custom rule if you need
+the ID numbers. `replacements.id_card` is still accepted and ignored. A
+`block_rule_ids` entry naming one of the removed IDs no longer matches
+anything; the phone rule is now `pii.phone`.
 
 The embedded rules recognise machine-looking secrets. A short human password
 written in prose, such as `my password is passW0RD!`, is not one of them. The
@@ -279,10 +319,12 @@ block_rule_ids: []
 replacements:
   email: "[EMAIL]"
   phone: "[PHONE]"
-  id_card: "[ID_CARD]"
   bank_card: "[BANK_CARD]"
+  iban: "[IBAN]"
   ip: "[IP_ADDRESS]"
   secret: "[SECRET]"
+
+phone_regions: []               # e.g. [RU, KZ]; national phone formats
 
 skip_models: []                 # explicit break-glass bypasses
 skip_formats: []
@@ -323,6 +365,7 @@ caller identifier, or `hmac_secret`.
 | `allow_unsupported_rules` | `false` | Reject unsupported custom-rule semantics; `true` allows explicitly reported skips. |
 | `block_rule_ids` | `[]` | In redact mode, terminate with 422 instead of replacing findings from these exact rule IDs. |
 | `replacements` | typed defaults | Override the six placeholder kinds; empty removes the matched value. |
+| `phone_regions` | `[]` | Regions whose national phone number formats are recognised. International `+` numbers need none. See [Phone numbers](#phone-numbers). |
 | `skip_models` / `skip_formats` | `[]` | Trusted, explicit inspection bypasses. They are evaluated before `key_filter`. |
 | `ml_assist` | disabled | Distilled sensitive-text student rescoring engine-clean texts. `audit` counts `ml_flagged` in logs only; `enforce` also redacts the whole span (downgraded to audit when plugin `mode` is `audit`). Never overrides engine findings. |
 | `limits` | values above | Request-wide bounds. Payload zeros select bounded defaults; detector limits must be positive. No value may exceed its hard maximum. |
@@ -443,7 +486,7 @@ tokenize:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `token_format` | `pf-{kind}-{hash12}` | Literal text may use only `[a-z0-9-]`, so a token never needs JSON escaping. `{hashN}` (N from 8 to 64) is required exactly once; `{kind}` is optional and expands to `email`, `phone`, `idcard`, `bankcard`, `ip` or `secret`. |
+| `token_format` | `pf-{kind}-{hash12}` | Literal text may use only `[a-z0-9-]`, so a token never needs JSON escaping. `{hashN}` (N from 8 to 64) is required exactly once; `{kind}` is optional and expands to `email`, `phone`, `bankcard`, `iban`, `ip` or `secret`. |
 | `hmac_secret` | `""` | Key for the token MAC, 16 to 1024 bytes. Empty selects a random key generated once per process. |
 | `max_entries` | `100000` | Upper bound on stored token-to-value mappings across all callers (hard maximum 1,000,000). The least recently used mapping is evicted first. |
 | `ttl` | `1h` | Sliding lifetime of a mapping, refreshed whenever the token is issued or restored (1s to 168h). It is also the idle lifetime of a response session. |

@@ -465,7 +465,12 @@ func configFieldsExact(fields []pluginConfigField) bool {
 		{
 			Name:        "replacements",
 			Type:        "object",
-			Description: "Typed placeholder overrides for email, phone, id_card, bank_card, ip, and secret.",
+			Description: "Typed placeholder overrides for email, phone, bank_card, iban, ip, and secret.",
+		},
+		{
+			Name:        "phone_regions",
+			Type:        "array",
+			Description: "ISO 3166-1 alpha-2 regions whose national phone formats are recognised. International + numbers need no region.",
 		},
 		{
 			Name:        "limits",

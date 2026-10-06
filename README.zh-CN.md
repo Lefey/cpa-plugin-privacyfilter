@@ -53,10 +53,16 @@
 
 检测引擎组合了：
 
-- 邮箱地址；
-- 中国大陆手机号和身份证号；
-- 通过 Luhn 校验的银行卡号；
-- IPv4 地址；
+- 邮箱地址（包括西里尔字母、希腊字母和带重音拉丁字母的地址）；
+- 所有国家的国际格式电话号码（`+` 加国家码），使用 libphonenumber 元数据校验；
+  本地格式号码仅对 `phone_regions` 中列出的地区识别；
+- 通过 Luhn 校验、首位为支付网络数字（2 至 6）的 13 到 19 位银行卡号，可连续书写，也可按常见卡号分组
+  （`4111 1111 1111 1111`、`4111-1111-1111-1111`、`3782 822463 10005`）；
+- 国家长度和校验和均有效的 IBAN；
+- IPv4 和 IPv6 地址；
+- 以 `scheme://user:password@host` 形式写入 URL 的密码（数据库 DSN、Git 远程地址、消息队列）；
+  只替换密码部分，URL 其余部分保持可读，`${DB_PASSWORD}`、`<password>`、`REPLACE_ME`
+  之类的文档占位符不会被触碰；
 - 带上下文和高熵特征的密钥检测；
 - 精确结构化凭证字段检测；
 - pinned Gitleaks 快照中适用于请求文本的 regex、keyword、entropy、capture group 和 allowlist 语义。
@@ -67,10 +73,31 @@
 |---|---|---|
 | `email` | `[邮箱]` | `[邮箱#2]` |
 | `phone` | `[电话]` | `[电话#2]` |
-| `id_card` | `[身份证]` | `[身份证#2]` |
 | `bank_card` | `[银行卡]` | `[银行卡#2]` |
+| `iban` | `[IBAN]` | `[IBAN#2]` |
 | `ip` | `[IP]` | `[IP#2]` |
 | `secret` | `[密钥]` | `[密钥#2]` |
+
+### 电话号码
+
+以 `+` 和国家码开头的号码无需配置即可识别，适用于所有国家，例如
+`+8613812345678`、`+44 20 7946 0958`。号码必须是该国的有效号码，而不只是位数正确。
+
+本地格式的号码有歧义，因此只对 `phone_regions` 中列出的地区识别（ISO 3166-1
+alpha-2 代码）：
+
+```yaml
+phone_regions: [CN]
+```
+
+每增加一个地区，都会扩大“电话号码”的范围，相同数字的订单号或标识符也会被替换；
+同时会增加处理大量以空格分隔的数字文本的开销。请只列出实际需要的地区。
+
+旧版本内置识别中国大陆手机号和 18 位居民身份证号的规则。这两条规则以及 `id_card`
+类型、rule ID `pii.phone-cn` 和 `pii.id-card-cn` 已移除：手机号请设置
+`phone_regions: [CN]`，身份证号如有需要请添加自定义规则。`replacements.id_card`
+仍被接受但会被忽略。`block_rule_ids` 中的已移除 ID 不再匹配任何内容；电话规则现为
+`pii.phone`。
 
 内嵌规则识别的是机器生成风格的密钥。以自然语言写出的简短人工密码（例如 `my password is passW0RD!`）不在其中。可选的 [`rules/prose-credentials.toml`](rules/prose-credentials.toml) 补充了这一点：把它复制到插件库旁边，将 `gitleaks_toml` 设为其路径，并设置 `gitleaks_mode: extend`。它会命中紧跟在 `пароль`、`секрет`、`токен`、`ключ`、`password` 或 `passwd` 之后的值，条件是该值带引号，或者长度不少于六个字符且包含数字或 `!@#%^&*` 之一。附近没有这些词的凭证仍然不会被检测到。对于会把团队成员名单写进 prompt 的聊天机器人，可以把 [`rules/team-roster.toml`](rules/team-roster.toml) 追加到同一个文件：它会把名单行中的成员姓名以及所有 `@handle` 替换为 token。
 
@@ -164,10 +191,12 @@ block_rule_ids: []
 replacements:
   email: "[EMAIL]"
   phone: "[PHONE]"
-  id_card: "[ID_CARD]"
   bank_card: "[BANK_CARD]"
+  iban: "[IBAN]"
   ip: "[IP_ADDRESS]"
   secret: "[SECRET]"
+
+phone_regions: []               # 例如 [CN]；本地格式电话号码
 
 skip_models: []                 # 显式 break-glass 绕过
 skip_formats: []
@@ -198,6 +227,7 @@ limits:
 | `allow_unsupported_rules` | `false` | 拒绝自定义规则中的不支持语义；`true` 允许跳过并明确报告。 |
 | `block_rule_ids` | `[]` | Redact 模式下，命中这些精确 rule ID 时以 422 终止，而不是替换。 |
 | `replacements` | 类型化默认值 | 覆盖六种 placeholder；空字符串表示删除命中值。 |
+| `phone_regions` | `[]` | 识别其本地格式电话号码的地区。国际格式（`+`）号码无需配置。 |
 | `skip_models` / `skip_formats` | `[]` | 可信且显式的完整检查绕过。先于 `key_filter` 判断。 |
 | `limits` | 如上 | 请求级上限。Payload 字段为零时使用有界默认值，detector 字段必须为正；所有值都不能超过对应 hard maximum。 |
 
@@ -273,7 +303,7 @@ tokenize:
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `token_format` | `pf-{kind}-{hash12}` | 字面部分只能使用 `[a-z0-9-]`，因此 token 永远不需要 JSON 转义。`{hashN}`（N 为 8 到 64）必须且只能出现一次；`{kind}` 可选，展开为 `email`、`phone`、`idcard`、`bankcard`、`ip` 或 `secret`。 |
+| `token_format` | `pf-{kind}-{hash12}` | 字面部分只能使用 `[a-z0-9-]`，因此 token 永远不需要 JSON 转义。`{hashN}`（N 为 8 到 64）必须且只能出现一次；`{kind}` 可选，展开为 `email`、`phone`、`bankcard`、`iban`、`ip` 或 `secret`。 |
 | `hmac_secret` | `""` | Token MAC 的密钥，16 到 1024 字节。为空时每个进程生成一次随机密钥。 |
 | `max_entries` | `100000` | 所有调用方合计的 token 到原始值映射数量上限（hard maximum 为 1,000,000）。超出时先淘汰最久未使用的映射。 |
 | `ttl` | `1h` | 映射的滑动存活时间，每次签发或还原该 token 时刷新（1s 到 168h）。同时也是响应会话的空闲存活时间。 |
