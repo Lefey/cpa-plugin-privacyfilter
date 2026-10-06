@@ -38,7 +38,7 @@ func FuzzPIIDetectorsNoPanic(f *testing.F) {
 		"DE89 3704 0044 0532 0130 00 GB82WEST12345698765432 NO93",
 		"::1 2001:db8::1. ::ffff:192.0.2.1: a::b",
 		"иван@почта.рф +00 000 0",
-		"postgres://u:p@h ://:@ https://a:b@[::1] x://u:${P}@h",
+		"postgres://u:p@h ://:@ redis://:p@h https://a:b@[::1] x://u:${P}@h 1000 000000 00009",
 	} {
 		f.Add(seed)
 	}

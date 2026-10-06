@@ -123,13 +123,16 @@ The engine combines:
 - phone numbers of every country in international format (`+` and a country
   code), validated with the libphonenumber metadata, and numbers in national
   format for the regions listed in [`phone_regions`](#phone-numbers);
-- Luhn-valid bank-card numbers of 13 to 19 digits starting with a payment
-  network digit (2 to 6), written without separators or in a usual card
-  layout (`4111 1111 1111 1111`, `4111-1111-1111-1111`, `3782 822463 10005`);
+- Luhn-valid bank-card numbers of 13 to 19 digits, written without separators
+  or in a usual card layout (`4111 1111 1111 1111`, `4111-1111-1111-1111`,
+  `3782 822463 10005`). A leading 0, or a leading 1 on anything but a
+  15-digit airline card, is not a card number, so an amount such as
+  `1000 2000 3000 4000` is left alone;
 - IBANs with a valid country length and checksum;
 - IPv4 and IPv6 addresses;
-- the password of a URL written as `scheme://user:password@host` (database
-  DSNs, Git remotes, message queues); only the password is replaced, so the
+- the password of a URL written as `scheme://user:password@host` or
+  `scheme://:password@host` (database DSNs, Git remotes, message queues,
+  Redis); only the password is replaced, so the
   rest of the URL stays readable, and documentation stand-ins such as
   `${DB_PASSWORD}`, `<password>` or `REPLACE_ME` are left alone;
 - contextual and high-entropy secret detection;

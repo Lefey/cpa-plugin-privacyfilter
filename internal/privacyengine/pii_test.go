@@ -108,12 +108,19 @@ func TestBankCardLeadingDigit(t *testing.T) {
 		"4111111111111111":    {"bank_card:4111111111111111"},
 		"5555-5555-5555-4444": {"bank_card:5555-5555-5555-4444"},
 		"6200 0000 0000 0005": {"bank_card:6200 0000 0000 0005"},
-		// Amounts and identifiers that satisfy the checksum but cannot be a
-		// card: leading 0, 1, 7, 8 or 9.
-		"сумма 1000 2000 3000 4000 руб":                               nil,
-		"0000 0000 0000 0000 and 0000000000000000":                    nil,
-		"7000 0000 0000 0005 8000 0000 0000 0003 9000 0000 0000 0001": nil,
-		"1000200030004000 9999999999999995":                           nil,
+		// Fuel cards and national schemes outside 2 to 6: a fuel card, RuPay,
+		// Belkart and Troy.
+		"7005 0000 0000 0000": {"bank_card:7005 0000 0000 0000"},
+		"8100 0000 0000 0002": {"bank_card:8100 0000 0000 0002"},
+		"9112 0000 0000 0006": {"bank_card:9112 0000 0000 0006"},
+		"9792000000000003":    {"bank_card:9792000000000003"},
+		// Airline cards under 1 have 15 digits.
+		"UATP 1000 000000 00009 ok": {"bank_card:1000 000000 00009"},
+		// No issuer has a leading 0, and none has a leading 1 at another
+		// length, so these checksum-valid amounts are not cards.
+		"сумма 1000 2000 3000 4000 руб":            nil,
+		"1000200030004000 and 1000 0000 0000 0008": nil,
+		"0000 0000 0000 0000 and 0000000000000000": nil,
 		// The leading digit of the whole number decides, not of a later
 		// group: the card inside still starts with 4.
 		"n 10 4111 1111 1111 1111 77": {"bank_card:4111 1111 1111 1111"},
@@ -169,7 +176,9 @@ func TestURLCredentials(t *testing.T) {
 		"DSN postgres://admin:S3cretPass@db.internal:5432/prod":         {"secret:S3cretPass"},
 		"mongodb+srv://u:pw@cluster0.abc.mongodb.net/?retryWrites=true": {"secret:pw"},
 		"git clone https://oauth2:glpat-x1y2z3@gitlab.com/g/p.git":      {"secret:glpat-x1y2z3"},
-		"redis://:onlypassword@cache:6379/0":                            nil,
+		"redis://:hunter2pass@cache:6379/0":                             {"secret:hunter2pass"},
+		"redis://:hunter2pass@redis.example.com:6379":                   {"secret:hunter2pass"},
+		"http://u:иван@почта.рф/x":                                      {"secret:иван"},
 		"amqp://guest:gu:es:t@rabbit.local":                             {"secret:gu:es:t"},
 		"ftp://user:p%40ss%2Fword@[2001:db8::1]:21/":                    {"secret:p%40ss%2Fword", "ip:2001:db8::1"},
 		// The password must not be mistaken for an email address.
@@ -185,8 +194,16 @@ func TestURLCredentials(t *testing.T) {
 		"postgres://user:****@db/app":           nil,
 		// Not a URL: no scheme, a host must follow, no whitespace inside. The
 		// email detector then reads "x@host.example.com" as it always did.
-		"user:pass@host.example.com":          {"email:pass@host.example.com"},
-		"scheme://user:pass@":                 nil,
+		"user:pass@host.example.com": {"email:pass@host.example.com"},
+		"scheme://user:pass@":        nil,
+		// An address is skipped only where a URL password was reported. What
+		// the URL detector declines stays with the email detector: no scheme,
+		// a scheme that starts with a digit, a form feed in the password, and
+		// a password that is a documentation stand-in.
+		"://a:alice@corp.com":                 {"email:alice@corp.com"},
+		"1://a:alice@corp.com":                {"email:alice@corp.com"},
+		"http://a:b\falice@corp.com":          {"email:alice@corp.com"},
+		"x://a:todo@corp.com":                 {"email:todo@corp.com"},
 		"https://user:pa ss@host.example.com": {"email:ss@host.example.com"},
 	})
 }

@@ -56,7 +56,8 @@ func ipBounded(text string, start, end int) bool {
 func detectPII(ctx context.Context, text string, phoneRegions []phoneRegion, collector *spanCollector) error {
 	// A URL password is added before the email detector so that the password
 	// span, not a "password@host" address, decides the finding.
-	if err := detectURLCredentials(ctx, text, collector); err != nil {
+	urlPasswordEnds, err := detectURLCredentials(ctx, text, collector)
+	if err != nil {
 		return err
 	}
 	if err := forEachMatchIndex(ctx, reEmail, text, func(start, end int) error {
@@ -66,7 +67,7 @@ func detectPII(ctx context.Context, text string, phoneRegions []phoneRegion, col
 		if isInSSHCommandContext(text, start) {
 			return nil
 		}
-		if isURLUserinfoAt(text, start+strings.IndexByte(text[start:end], '@')) {
+		if containsOffset(urlPasswordEnds, start+strings.IndexByte(text[start:end], '@')) {
 			return nil
 		}
 		return collector.add(span{start: start, end: end, kind: KindEmail, ruleID: rulePIIEmail})
@@ -154,8 +155,8 @@ type digitGroup struct{ start, end int }
 // (4-4-4-4-3).
 const maxCardGroups = 5
 
-// detectBankCards finds Luhn-valid card numbers of 13 to 19 digits that start
-// with a payment-network digit, written either without separators or in a
+// detectBankCards finds Luhn-valid card numbers of 13 to 19 digits whose
+// leading digit an issuer can have, written either without separators or in a
 // usual card layout with single spaces or hyphens. Requiring a layout keeps
 // dates, timestamps and other separated numbers from being tested against the
 // checksum at all.
@@ -171,22 +172,13 @@ func detectBankCards(ctx context.Context, text string, collector *spanCollector)
 				i++
 				continue
 			}
-			// Every payment network issues from major industry identifiers 2
-			// to 6 (Mir and Mastercard 2, Amex, Diners and JCB 3, Visa 4,
-			// Mastercard and Maestro 5, Discover, UnionPay and Maestro 6).
-			// Other leading digits keep amounts such as "1000 2000 3000 4000"
-			// that happen to satisfy the checksum from being reported.
-			if first := text[groups[i].start]; first < '2' || first > '6' {
-				i++
-				continue
-			}
 			matched := false
 			last := i + maxCardGroups - 1
 			if last >= len(groups) {
 				last = len(groups) - 1
 			}
 			for j := last; j >= i; j-- {
-				if !cardLayout(groups[i:j+1], separators[i:j]) || !luhnGroups(text, groups[i:j+1]) {
+				if !cardLayout(groups[i:j+1], separators[i:j]) || !cardIssuerDigit(text, groups[i:j+1]) || !luhnGroups(text, groups[i:j+1]) {
 					continue
 				}
 				if err := collector.add(span{start: groups[i].start, end: groups[j].end, kind: KindBankCard, ruleID: rulePIIBankCard}); err != nil {
@@ -257,6 +249,27 @@ func cardLayout(groups []digitGroup, separators []byte) bool {
 		}
 	}
 	return size(len(groups)-1) <= 4
+}
+
+// cardIssuerDigit rejects the two leading digits under which no card of the
+// tested length is issued: 0 is not assigned to card issuers at all, and 1
+// belongs to airlines, whose UATP cards have 15 digits. This keeps amounts
+// such as "1000 2000 3000 4000" that happen to satisfy the checksum from
+// being reported. Every other digit stays: besides the international
+// networks under 2 to 6 there are fuel cards under 7 and national schemes
+// under 8 and 9 (RuPay 81, Belkart 9112, Troy 9792, Prostir 9804).
+func cardIssuerDigit(text string, groups []digitGroup) bool {
+	switch text[groups[0].start] {
+	case '0':
+		return false
+	case '1':
+		digits := 0
+		for _, group := range groups {
+			digits += group.end - group.start
+		}
+		return digits == 15
+	}
+	return true
 }
 
 func luhnGroups(text string, groups []digitGroup) bool {
