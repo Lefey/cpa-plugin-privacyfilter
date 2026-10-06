@@ -162,6 +162,33 @@ plugins:
 
 不配置插件自有选项时，privacyfilter 默认使用 `mode: redact`、`on_error: block`、内嵌规则、空 block/skip 列表和下方有界限制。`enabled` 和 `priority` 是宿主字段；其宿主默认 priority 为 `0`。运维可以调整 priority 或插件选项，但必须根据所有 request interceptor 验证实际顺序；每个 interceptor 阶段中，priority 越低越晚执行。
 
+### 通过 Plugin Store 源安装
+
+除了手动复制库文件，也可以让宿主直接从本仓库的 Release 安装和更新。把 [`registry.json`](registry.json)
+作为第三方 Store 源加入宿主配置：
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  store-sources:
+    - "https://raw.githubusercontent.com/Lefey/cpa-plugin-privacyfilter/main/registry.json"
+```
+
+之后插件会出现在管理面板的 Plugin Store 中，与官方源并列。通过管理 API 执行同样的操作会安装最新 Release，
+并用其中的 `checksums.txt` 校验 archive：
+
+```bash
+curl -X POST \
+  "http://127.0.0.1:8317/v0/management/plugin-store/privacyfilter/install?source=source-8453421ec50d" \
+  -H "Authorization: Bearer $MANAGEMENT_KEY"
+```
+
+`source-8453421ec50d` 是宿主根据上述 registry URL 推导出的标识（`source-` 加上其 SHA-256 的前 12 个十六进制字符），
+URL 变化时它也会变化。务必带上该参数：官方源在同一个 `privacyfilter` ID 下列出的是另一个插件。宿主不会自动检查更新；
+发布新 Release 后重新调用一次并重启进程。宿主会在插件配置段的 `store` 下记录安装来源和版本；它与 `enabled`、`priority`
+一样属于宿主字段，插件会忽略它。
+
 ## 配置说明
 
 完整的插件自有配置示例：

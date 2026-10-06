@@ -290,6 +290,38 @@ is priority `0`. An operator may change priority or plugin-owned options, but
 should verify ordering against every other request interceptor. Lower priority
 runs later in each interceptor stage.
 
+### Installing through a Plugin Store source
+
+Instead of copying the library by hand, the Host can install and update it from
+this repository's Releases. Add the registry in [`registry.json`](registry.json)
+as a third-party Store source:
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  store-sources:
+    - "https://raw.githubusercontent.com/Lefey/cpa-plugin-privacyfilter/main/registry.json"
+```
+
+The plugin then appears in the management panel's Plugin Store next to the
+official source. The same action over the management API installs the latest
+Release, verifying the archive against its `checksums.txt`:
+
+```bash
+curl -X POST \
+  "http://127.0.0.1:8317/v0/management/plugin-store/privacyfilter/install?source=source-8453421ec50d" \
+  -H "Authorization: Bearer $MANAGEMENT_KEY"
+```
+
+`source-8453421ec50d` is the identifier the Host derives from the registry URL
+above (`source-` and the first 12 hexadecimal characters of its SHA-256); it
+changes if the URL does. Always pass it: the official source lists a different
+plugin under the same `privacyfilter` ID. The Host does not poll for updates;
+repeat the call after a new Release and restart the process. The Host records
+the installed source and version under `store` in the plugin stanza; like
+`enabled` and `priority` it is Host-owned and the plugin ignores it.
+
 ## Configuration reference
 
 A complete plugin-owned example is:

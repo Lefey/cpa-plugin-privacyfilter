@@ -68,6 +68,10 @@ type privacyFilterConfig struct {
 	// native plugins. Accept but never use them; the host enforces both values.
 	Enabled  bool `yaml:"enabled"`
 	Priority int  `yaml:"priority"`
+	// Store is the manifest the Host writes into the stanza of a plugin it
+	// installed from a Plugin Store (source, version, release tag). Its shape
+	// belongs to the Host, so any mapping is accepted.
+	Store yaml.Node `yaml:"store"`
 
 	// Existing v0.2 fields remain valid.
 	GitleaksTOML string   `yaml:"gitleaks_toml"`

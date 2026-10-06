@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "privacyfilter",
+      "name": "Privacy Filter",
+      "description": "Redacts or reversibly tokenizes emails, phone numbers, bank cards, IBANs, IP addresses, URL passwords and secrets in requests before they reach the provider.",
+      "author": "Lefey (fork of ahoo and rheodev)",
+      "repository": "https://github.com/Lefey/cpa-plugin-privacyfilter",
+      "homepage": "https://github.com/Lefey/cpa-plugin-privacyfilter",
+      "license": "MIT",
+      "tags": ["Privacy", "Security", "PII", "Secrets", "Interceptor"]
+    }
+  ]
+}

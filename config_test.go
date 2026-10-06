@@ -263,3 +263,34 @@ func TestPhoneRegionsAndRetiredReplacementKind(t *testing.T) {
 		t.Fatalf("findings=%d body=%s", findings, modified)
 	}
 }
+
+// The Host records where a Store-installed plugin came from under "store" in
+// the plugin's own stanza and passes the stanza to the plugin unchanged.
+func TestParseConfigAcceptsHostStoreManifest(t *testing.T) {
+	cfg, err := parseConfig([]byte(`
+enabled: true
+priority: 0
+mode: tokenize
+store:
+  schema-version: 1
+  id: privacyfilter
+  version: 0.4.0
+  release-tag: v0.4.0
+  repository: https://github.com/Lefey/cpa-plugin-privacyfilter
+  source-id: source-0123456789ab
+  source-url: https://raw.githubusercontent.com/Lefey/cpa-plugin-privacyfilter/main/registry.json
+  tags: [Privacy, Security]
+  install:
+    type: github-release
+`))
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if cfg.Mode != modeTokenize {
+		t.Fatalf("mode = %q", cfg.Mode)
+	}
+	// A typo next to it is still rejected.
+	if _, err := parseConfig([]byte("store: {id: privacyfilter}\nstorage: 1\n")); err == nil {
+		t.Fatal("an unknown field next to store was accepted")
+	}
+}
